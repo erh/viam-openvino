@@ -1,0 +1,40 @@
+{
+  "$schema": "https://dl.viam.dev/module.schema.json",
+  "module_id": "erh:viam-openvino",
+  "visibility": "public",
+  "url": "https://github.com/erh/viam-openvino",
+  "description": "ML Model service that runs ONNX, OpenVINO IR, TFLite, TensorFlow and PaddlePaddle models on Intel CPU, iGPU, Arc GPU and NPU via the OpenVINO runtime (Linux and Windows), plus a YOLO detection vision service.",
+  "applications": null,
+  "markdown_link": "README.md",
+  "entrypoint": "dist/main",
+  "first_run": "",
+  "models": [
+    {
+      "api": "rdk:service:mlmodel",
+      "model": "erh:openvino:mlmodel",
+      "markdown_link": "README.md#viamopenvinomlmodel",
+      "short_description": "Run ML models with the OpenVINO runtime on Intel CPU, GPU and NPU."
+    },
+    {
+      "api": "rdk:service:vision",
+      "model": "erh:openvino:yolo",
+      "markdown_link": "README.md#viamopenvinoyolo",
+      "short_description": "YOLO v5/v8/v11 decoding and NMS on top of any mlmodel service."
+    },
+    {
+      "api": "rdk:service:generic",
+      "model": "erh:openvino:diagnostics",
+      "markdown_link": "README.md#viamopenvinodiagnostics",
+      "short_description": "Device discovery, compiled-model properties, benchmarking and latency stats."
+    }
+  ],
+  "build": {
+    "build": "./build.sh",
+    "setup": "./setup.sh",
+    "path": "dist/archive.tar.gz",
+    "arch": [
+      "linux/amd64",
+      "linux/arm64"
+    ]
+  }
+}

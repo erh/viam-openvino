@@ -1,0 +1,13 @@
+{
+  "module_name": "viam-openvino",
+  "visibility": "public",
+  "namespace": "erh",
+  "language": "python",
+  "resource_type": "service",
+  "resource_subtype": "mlmodel",
+  "model_name": "mlmodel",
+  "initialize_git": false,
+  "generator_version": "0.1.0",
+  "generated_on": "2026-09-29T08:41:12.502058Z",
+  "module_readme_link": "README.md"
+}
