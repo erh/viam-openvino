@@ -71,14 +71,16 @@ _OV_TYPES = {
 
 DRIVER_HINTS = {
     "GPU": (
-        "the Intel compute runtime is probably missing. On Ubuntu install intel-opencl-icd, "
-        "intel-level-zero-gpu (or libze-intel-gpu1) and libze1, then add the viam-server user "
-        "to the 'render' group and restart. See the module README for exact commands."
+        "the Intel compute runtime is probably missing. The module's first_run.sh installs it on Ubuntu "
+        "(run it as root if the automatic first run could not); otherwise install intel-opencl-icd, "
+        "intel-level-zero-gpu (or libze-intel-gpu1) and libze1, add the viam-server user to the 'render' "
+        "group and restart. See the module README."
     ),
     "NPU": (
-        "the Intel NPU driver is probably missing. On Ubuntu install the intel-npu-driver packages "
-        "(intel-driver-compiler-npu, intel-fw-npu, intel-level-zero-npu) and libze1, make sure "
-        "/dev/accel/accel0 exists and is accessible, then restart. See the module README."
+        "the Intel NPU driver is probably missing. The module's first_run.sh installs it on Ubuntu "
+        "(run it as root if the automatic first run could not); otherwise install the intel/linux-npu-driver "
+        "packages (intel-driver-compiler-npu, intel-fw-npu, intel-level-zero-npu) and libze1, make sure "
+        "/dev/accel/accel0 exists and is accessible (kernel 6.8+), then restart. See the module README."
     ),
 }
 

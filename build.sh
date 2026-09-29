@@ -23,6 +23,7 @@ if [ "$EXE" != "dist/main" ]; then
 import json
 m = json.load(open("meta.json"))
 m["entrypoint"] = "dist/main.exe"
+m["first_run"] = ""  # first_run.sh is a POSIX shell script; Windows drivers come from Intel's installer
 json.dump(m, open("meta.json", "w"), indent=2)
 PY
 fi

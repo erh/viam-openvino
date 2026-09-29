@@ -5,8 +5,14 @@ Runs without viam-server. For each device it compiles the model twice (cold comp
 compile that should hit the cache), runs a warm-up, then times ``--iterations`` serial inferences and
 a concurrent run with ``--concurrency`` threads (or the device's optimal request count).
 
+Without --model it downloads a small public ONNX sample (MobileNetV2 from the ONNX model zoo) into
+~/.cache/viam-openvino/models the first time and reuses it afterwards. Dynamic dimensions such as a
+batch axis are set to 1 unless overridden with --input-shape.
+
 Examples (from the repo root, after ./setup.sh or make venv):
 
+    .venv/bin/python scripts/benchmark_devices.py                      # MobileNetV2 sample on CPU/GPU/NPU/AUTO
+    .venv/bin/python scripts/benchmark_devices.py --sample resnet50
     .venv/bin/python scripts/benchmark_devices.py --model /path/to/yolov8n.onnx
     .venv/bin/python scripts/benchmark_devices.py --model model.xml --devices CPU GPU NPU AUTO --iterations 200
     .venv/bin/python scripts/benchmark_devices.py --model model.onnx --input-shape images=1,3,640,640 --precision f16
@@ -32,11 +38,53 @@ import numpy as np
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 sys.modules["openvino_telemetry"] = None  # type: ignore[assignment]  # same opt-out as src/main.py
 
+import openvino as ov  # noqa: E402
 
 from models.config import MLModelConfig, parse_device  # noqa: E402
 from models.engine import OpenVINOEngine, list_devices  # noqa: E402
 
 DEFAULT_DEVICES = ["CPU", "GPU", "NPU", "AUTO"]
+
+# Public sample models (ONNX model zoo, served through GitHub LFS). All have a dynamic batch axis.
+SAMPLE_MODELS = {
+    "mobilenetv2": (
+        "mobilenetv2-12.onnx",
+        "https://github.com/onnx/models/raw/main/validated/vision/classification/mobilenet/model/mobilenetv2-12.onnx",
+    ),
+    "resnet50": (
+        "resnet50-v2-7.onnx",
+        "https://github.com/onnx/models/raw/main/validated/vision/classification/resnet/model/resnet50-v2-7.onnx",
+    ),
+    "ssd-mobilenetv1": (
+        "ssd_mobilenet_v1_12.onnx",
+        "https://github.com/onnx/models/raw/main/validated/vision/object_detection_segmentation/ssd-mobilenetv1/model/ssd_mobilenet_v1_12.onnx",
+    ),
+}
+DEFAULT_SAMPLE = "mobilenetv2"
+SAMPLE_INPUT_SHAPES = {"ssd-mobilenetv1": {"image_tensor:0": [1, 640, 640, 3]}}
+
+
+def sample_model_path(name: str, model_dir: str) -> str:
+    """Return the local path of a sample model, downloading it if it is not there yet."""
+    filename, url = SAMPLE_MODELS[name]
+    os.makedirs(model_dir, exist_ok=True)
+    path = os.path.join(model_dir, filename)
+    if os.path.isfile(path) and os.path.getsize(path) > 0:
+        return path
+    import urllib.request
+
+    print(f"downloading sample model {name} from {url} ...", flush=True)
+    tmp = path + ".part"
+    try:
+        with urllib.request.urlopen(url, timeout=60) as resp, open(tmp, "wb") as out:
+            shutil.copyfileobj(resp, out)
+        os.replace(tmp, path)
+    except Exception as e:
+        if os.path.exists(tmp):
+            os.remove(tmp)
+        raise SystemExit(f"could not download {url}: {e}\nDownload it manually and pass --model {path}") from e
+    print(f"saved to {path} ({os.path.getsize(path) / 1e6:.1f} MB)")
+    return path
 
 
 def parse_shape_args(values: List[str]) -> Dict[str, List[int]]:
@@ -64,6 +112,32 @@ def random_feeds(engine: OpenVINOEngine, shapes: Dict[str, List[int]]) -> Dict[s
     return feeds
 
 
+def resolve_input_shapes(args) -> Dict[str, List[int]]:
+    """Explicit --input-shape values, plus every remaining dynamic dimension of the model set to 1."""
+    shapes = dict(parse_shape_args(args.input_shape))
+    if args.sample_shapes:
+        for k, v in args.sample_shapes.items():
+            shapes.setdefault(k, v)
+    core = ov.Core()
+    model = core.read_model(args.model)
+    for i, inp in enumerate(model.inputs):
+        try:
+            name = inp.get_any_name()
+        except Exception:
+            name = f"input{i}"
+        if name in shapes:
+            continue
+        ps = inp.get_partial_shape()
+        if ps.rank.is_dynamic:
+            continue
+        dims = [(-1 if d.is_dynamic else d.get_length()) for d in ps]
+        if any(d < 0 for d in dims):
+            fixed = [1 if d < 0 else d for d in dims]
+            print(f"input '{name}' has dynamic shape {dims}; using {fixed} (override with --input-shape {name}=...)")
+            shapes[name] = fixed
+    return shapes
+
+
 def make_engine(args, device: str, cache_dir: str) -> OpenVINOEngine:
     attrs: Dict[str, Any] = {
         "model_path": args.model,
@@ -75,8 +149,8 @@ def make_engine(args, device: str, cache_dir: str) -> OpenVINOEngine:
         attrs["inference_precision"] = args.precision
     if args.num_requests:
         attrs["num_requests"] = args.num_requests
-    if args.input_shape:
-        attrs["input_shape"] = parse_shape_args(args.input_shape)
+    if args.resolved_shapes:
+        attrs["input_shape"] = args.resolved_shapes
     engine = OpenVINOEngine(MLModelConfig.from_attributes(attrs), logging.getLogger("bench"))
     engine.load()
     return engine
@@ -108,7 +182,7 @@ def bench_device(args, device: str, cache_root: str) -> Dict[str, Any]:
     except Exception:
         pass
 
-    feeds = random_feeds(engine, parse_shape_args(args.input_shape))
+    feeds = random_feeds(engine, args.resolved_shapes)
     result["input_shape"] = {k: list(v.shape) for k, v in feeds.items()}
     try:
         for _ in range(args.warmup):
@@ -184,7 +258,9 @@ def print_table(rows: List[Dict[str, Any]], markdown: bool) -> None:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--model", required=True, help="model path (.onnx, .xml, .tflite, ...)")
+    ap.add_argument("--model", default=None, help="model path (.onnx, .xml, .tflite, ...); default: a downloaded sample")
+    ap.add_argument("--sample", default=DEFAULT_SAMPLE, choices=sorted(SAMPLE_MODELS), help=f"public sample model to use when --model is not given (default: {DEFAULT_SAMPLE})")
+    ap.add_argument("--model-dir", default=os.environ.get("VIAM_OPENVINO_MODEL_DIR", os.path.expanduser("~/.cache/viam-openvino/models")), help="where sample models are downloaded")
     ap.add_argument("--devices", nargs="+", default=DEFAULT_DEVICES, help=f"devices to test (default: {' '.join(DEFAULT_DEVICES)})")
     ap.add_argument("--iterations", type=int, default=200)
     ap.add_argument("--warmup", type=int, default=20)
@@ -201,6 +277,13 @@ def main() -> int:
     args = ap.parse_args()
 
     logging.basicConfig(level=logging.INFO if args.verbose else logging.WARNING, format="%(levelname)s %(message)s")
+    args.sample_shapes = None
+    if args.model is None:
+        args.model = sample_model_path(args.sample, args.model_dir)
+        args.sample_shapes = SAMPLE_INPUT_SHAPES.get(args.sample)
+    elif not os.path.exists(args.model):
+        raise SystemExit(f"model '{args.model}' does not exist")
+    args.resolved_shapes = resolve_input_shapes(args)
     info = list_devices()
     available = [d["name"] for d in info["devices"]]
     print(f"OpenVINO {info['openvino_version']} on {platform.node()} ({platform.machine()}, {platform.system()} {platform.release()})")

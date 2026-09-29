@@ -301,12 +301,16 @@ On Core Ultra machines the same driver package installs the NPU driver; Device M
 
 `scripts/benchmark_devices.py` compares CPU, GPU, NPU and AUTO on the machine it runs on, without viam-server. For
 each device it does a cold compile, a second compile that should hit the cache, a serial latency run and a concurrent
-throughput run, and it keeps going when a device is missing or fails to compile. It needs the same venv as the tests:
+throughput run, and it keeps going when a device is missing or fails to compile. Without `--model` it downloads a
+public sample from the ONNX model zoo (MobileNetV2 by default, 14 MB) into `~/.cache/viam-openvino/models` on first
+use; `--sample resnet50` and `--sample ssd-mobilenetv1` are also available. Dynamic dimensions such as the batch axis
+are set to 1 unless overridden, because the NPU needs static shapes. It needs the same venv as the tests:
 
 ```sh
 make venv
-make bench MODEL=/path/to/yolov8n.onnx                       # Markdown table + bench-results.json
-.venv/bin/python scripts/benchmark_devices.py --model m.onnx --devices CPU GPU NPU AUTO --iterations 200
+make bench                                                   # MobileNetV2 sample, Markdown table + bench-results.json
+make bench MODEL=/path/to/yolov8n.onnx
+.venv/bin/python scripts/benchmark_devices.py --sample resnet50 --devices CPU GPU NPU AUTO --iterations 200
 .venv/bin/python scripts/benchmark_devices.py --model m.onnx --precision f16 --hint THROUGHPUT --concurrency 4
 .venv/bin/python scripts/benchmark_devices.py --model m.onnx --input-shape images=1,3,640,640   # dynamic exports
 ```

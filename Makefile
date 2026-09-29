@@ -30,6 +30,6 @@ fetch-yolov8n:
 clean:
 	rm -rf build dist venv .installed *.spec
 
-# Compare CPU / GPU / NPU / AUTO on this machine, e.g. make bench MODEL=/path/to/yolov8n.onnx
+# Compare CPU / GPU / NPU / AUTO on this machine. Uses a downloaded MobileNetV2 sample unless MODEL=/path/to/model is set.
 bench: venv
-	$(VENV)/bin/python scripts/benchmark_devices.py --model "$${MODEL:?set MODEL=/path/to/model}" --markdown --json bench-results.json
+	$(VENV)/bin/python scripts/benchmark_devices.py $(if $(MODEL),--model "$(MODEL)",) --markdown --json bench-results.json
