@@ -54,7 +54,8 @@ def tiny_weights():
 def tiny_ir(tmp_path_factory, tiny_weights):
     d = tmp_path_factory.mktemp("ir")
     xml = str(d / "tiny.xml")
-    ov.save_model(build_tiny_ov_model(tiny_weights), xml)
+    # Keep f32 weights: save_model compresses to f16 by default, which makes IR and ONNX outputs differ.
+    ov.save_model(build_tiny_ov_model(tiny_weights), xml, compress_to_fp16=False)
     return xml
 
 

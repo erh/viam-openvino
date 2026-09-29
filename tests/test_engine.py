@@ -20,8 +20,9 @@ def make_engine(model_path, tmp_path, **attrs):
 
 def test_ir_and_onnx_match(tiny_ir, tiny_onnx, tmp_path):
     x = np.random.default_rng(0).random((1, 3, 8, 8), dtype=np.float32)
-    e1 = make_engine(tiny_ir, tmp_path / "a")
-    e2 = make_engine(tiny_onnx, tmp_path / "b")
+    # Pin f32: CPUs with native bf16 (AMX / AVX512_BF16) default to bf16 inference, which is not bit-comparable.
+    e1 = make_engine(tiny_ir, tmp_path / "a", inference_precision="f32")
+    e2 = make_engine(tiny_onnx, tmp_path / "b", inference_precision="f32")
     try:
         o1 = e1.infer({"images": x})
         o2 = e2.infer({"images": x})

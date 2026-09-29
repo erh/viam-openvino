@@ -173,37 +173,46 @@ else
         else api="https://api.github.com/repos/intel/linux-npu-driver/releases/tags/$NPU_DRIVER_VERSION"; fi
         tmpd="$(mktemp -d /tmp/npu-driver.XXXXXX)"
         if fetch "$api" "$tmpd/release.json"; then
-            # Pick the .deb assets built for this Ubuntu release; fall back to 24.04 builds for newer releases.
-            urls="$(grep -o '"browser_download_url": *"[^"]*ubuntu'"$DISTRO_VERSION"'_amd64.deb"' "$tmpd/release.json" | sed 's/.*"\(http[^"]*\)"/\1/')"
+            urls_of() { grep -o '"browser_download_url": *"[^"]*'"$1"'"' "$tmpd/release.json" | sed 's/.*"\(http[^"]*\)"/\1/'; }
+            # Current releases ship one tarball of .deb packages per Ubuntu release
+            # (linux-npu-driver-<ver>-ubuntu2404.tar.gz); older releases attached the .deb files directly.
+            short="$(echo "$DISTRO_VERSION" | tr -d .)"
+            urls="$(urls_of "ubuntu${short}.tar.gz")"
+            [ -z "$urls" ] && urls="$(urls_of "ubuntu${DISTRO_VERSION}_amd64.deb")"
             if [ -z "$urls" ]; then
-                urls="$(grep -o '"browser_download_url": *"[^"]*ubuntu24.04_amd64.deb"' "$tmpd/release.json" | sed 's/.*"\(http[^"]*\)"/\1/')"
-                [ -n "$urls" ] && log "no NPU driver build for Ubuntu $DISTRO_VERSION in this release; using the 24.04 build"
-            fi
-            if [ -z "$urls" ]; then
-                warn "no NPU driver .deb assets found for Ubuntu $DISTRO_VERSION in $api"
+                avail="$(grep -o '"name": *"[^"]*ubuntu[0-9.]*[^"]*"' "$tmpd/release.json" | grep -o 'ubuntu[0-9.]*' | sort -u | tr '\n' ' ')"
+                warn "this NPU driver release has no build for Ubuntu $DISTRO_VERSION (available: ${avail:-none})."
+                warn "Pin an older release with VIAM_OPENVINO_NPU_DRIVER_VERSION=vX.Y.Z or install manually from $api"
             else
                 got=0
                 for u in $urls; do
                     f="$tmpd/$(basename "$u")"
                     if fetch "$u" "$f"; then got=$((got+1)); else warn "download failed: $u"; fi
                 done
-                if [ $got -gt 0 ]; then
-                    # Level Zero loader first (libze1 from the Intel/Ubuntu repos, or the loader .deb shipped with the release).
+                for t in "$tmpd"/*.tar.gz; do [ -f "$t" ] && tar -xzf "$t" -C "$tmpd" 2>/dev/null; done
+                # Skip debug-symbol packages; install the driver, compiler and firmware packages.
+                debs="$(find "$tmpd" -name '*.deb' ! -name '*dbgsym*' | tr '\n' ' ')"
+                if [ $got -gt 0 ] && [ -n "$debs" ]; then
+                    # Level Zero loader first (libze1 from the Intel/Ubuntu repos, or a loader .deb shipped with the release).
                     if ! ze_loader_ok; then
                         add_intel_repo >/dev/null 2>&1
                         apt_install libze1 >/dev/null 2>&1 || apt_install level-zero >/dev/null 2>&1 || true
                     fi
                     apt_install libtbb12 >/dev/null 2>&1 || true
-                    if $SUDO dpkg -i "$tmpd"/*.deb >/dev/null 2>&1 || $APT install -f -y >/dev/null 2>&1; then
-                        log "NPU driver packages installed"
+                    # shellcheck disable=SC2086
+                    if $SUDO dpkg -i $debs >/dev/null 2>&1 || $APT install -f -y >/dev/null 2>&1; then
+                        log "NPU driver packages installed: $(for d in $debs; do basename "$d" | cut -d_ -f1; done | tr '\n' ' ')"
                     else
                         warn "dpkg reported errors installing the NPU driver packages"
                     fi
                     # Device node access for non-root viam-server users.
                     if [ ! -f /etc/udev/rules.d/10-intel-vpu.rules ]; then
+                        $SUDO mkdir -p /etc/udev/rules.d
                         echo 'SUBSYSTEM=="accel", KERNEL=="accel*", GROUP="render", MODE="0660"' | $SUDO tee /etc/udev/rules.d/10-intel-vpu.rules >/dev/null
                         $SUDO udevadm control --reload-rules >/dev/null 2>&1; $SUDO udevadm trigger --subsystem-match=accel >/dev/null 2>&1
                     fi
+                else
+                    warn "no NPU driver .deb packages could be downloaded"
                 fi
             fi
         else
