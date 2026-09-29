@@ -195,7 +195,10 @@ def bench_device(args, device: str, cache_root: str) -> Dict[str, Any]:
             time.sleep(0.1)
             engine.infer(feeds)
         if result["execution_devices_at_start"] != engine.execution_devices:
-            result["note"] = f"AUTO warmed up on {','.join(result['execution_devices_at_start'])} for {time.perf_counter() - t_wait:.1f}s, then switched"
+            waited = time.perf_counter() - t_wait
+            where = ",".join(result["execution_devices_at_start"]).strip("()")
+            result["note"] = (f"warm-started on {where}, switched after {waited:.1f}s" if waited >= 0.05
+                              else f"warm-started on {where}, switched during warm-up")
         lat = []
         t0 = time.perf_counter()
         for _ in range(args.iterations):
@@ -291,35 +294,55 @@ def fmt(v: Any, nd: int = 2) -> str:
     return str(v)
 
 
-def print_table(rows: List[Dict[str, Any]], markdown: bool) -> None:
-    cols = [
-        ("device", "Device"), ("compile_device", "Resolved to"), ("execution_devices", "Runs on"), ("serial_mean_ms", "mean ms"), ("serial_p50_ms", "p50 ms"),
-        ("serial_p99_ms", "p99 ms"), ("serial_fps", "FPS serial"), ("concurrent_fps", "FPS concurrent"),
-        ("concurrent_workers", "workers"), ("compile_cold_ms", "compile ms"), ("compile_cached_ms", "cached compile ms"),
-        ("cache_hit", "cache hit"), ("note", "note"), ("error", "error"),
-    ]
-    table = []
-    for r in rows:
-        line = []
-        for key, _ in cols:
-            v = r.get(key)
-            if isinstance(v, list):
-                v = ",".join(map(str, v))
-            if key == "compile_device" and v == r.get("device"):
-                v = "-"
-            line.append(fmt(v))
-        table.append(line)
-    headers = [h for _, h in cols]
+def build_rows(results: List[Dict[str, Any]]) -> List[Dict[str, str]]:
+    """Condense raw results into the columns people actually read."""
+    cpu = next((r for r in results if r.get("device") == "CPU" and "serial_mean_ms" in r), None)
+    cpu_fps = cpu["serial_fps"] if cpu else None
+    rows = []
+    for r in results:
+        if "error" in r:
+            rows.append({"Device": r["device"], "Ran on": "-", "Latency p50 / p99 ms": "-", "FPS": "-", "vs CPU": "-",
+                         "Compile cold / cached ms": "-", "Notes": r["error"]})
+            continue
+        ran = ",".join(r.get("execution_devices", []))
+        notes = []
+        if r.get("compile_device") and r["compile_device"] != r["device"]:
+            notes.append(f"resolved to {r['compile_device']}")
+        if r.get("note"):
+            notes.append(r["note"])
+        if r.get("cache_hit") is False:
+            notes.append("second compile was not a cache hit")
+        if r.get("concurrent_workers", 1) > 1:
+            notes.append(f"{r['concurrent_fps']:.0f} FPS with {r['concurrent_workers']} concurrent requests")
+        speed = f"{r['serial_fps'] / cpu_fps:.2f}x" if cpu_fps else "-"
+        if r is cpu:
+            speed = "1.00x"
+        rows.append({
+            "Device": r["device"],
+            "Ran on": ran,
+            "Latency p50 / p99 ms": f"{r['serial_p50_ms']:.2f} / {r['serial_p99_ms']:.2f}",
+            "FPS": f"{r['serial_fps']:.0f}",
+            "vs CPU": speed,
+            "Compile cold / cached ms": f"{r['compile_cold_ms']:.0f} / {r['compile_cached_ms']:.0f}",
+            "Notes": "; ".join(notes) or "",
+        })
+    return rows
+
+
+def print_table(results: List[Dict[str, Any]], markdown: bool) -> None:
+    rows = build_rows(results)
+    headers = list(rows[0].keys()) if rows else []
     if markdown:
         print("| " + " | ".join(headers) + " |")
-        print("|" + "|".join("---" for _ in headers) + "|")
-        for line in table:
-            print("| " + " | ".join(line) + " |")
+        print("|" + "|".join("---" if h in ("Device", "Ran on", "Notes") else "---:" for h in headers) + "|")
+        for row in rows:
+            print("| " + " | ".join(row[h] for h in headers) + " |")
         return
-    widths = [max(len(h), *(len(line[i]) for line in table)) for i, h in enumerate(headers)]
+    widths = [max(len(h), *(len(row[h]) for row in rows)) for h in headers]
     print("  ".join(h.ljust(w) for h, w in zip(headers, widths)))
-    for line in table:
-        print("  ".join(c.ljust(w) for c, w in zip(line, widths)))
+    print("  ".join("-" * w for w in widths))
+    for row in rows:
+        print("  ".join(row[h].ljust(w) for h, w in zip(headers, widths)))
 
 
 def main() -> int:

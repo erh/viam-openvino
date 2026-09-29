@@ -77,11 +77,12 @@ To confirm which devices OpenVINO can see on the machine, add a `erh:openvino:di
 
 **How `AUTO` picks a device.** OpenVINO's own `AUTO` only considers GPU and CPU and ignores the NPU. This module
 therefore expands a bare `"device": "AUTO"` into an explicit priority list over the devices actually present:
-GPU(s) first (widest op support), then NPU, then CPU, for example `AUTO:GPU,NPU,CPU` on a Core Ultra machine or
-`AUTO:NPU,CPU` on a box without a usable GPU. OpenVINO's `AUTO` then tries the candidates in that order and falls
-back to the next one if a compile fails. The startup log shows the expansion, and `get_compiled_properties` reports it
-as `compile_device`. To force a different order write it yourself, e.g. `"device": "AUTO:NPU,GPU,CPU"`, or name a
-single device such as `"NPU"`.
+NPU first (fastest and most power-efficient for batch-1 vision models), then GPU(s), then CPU, for example
+`AUTO:NPU,GPU,CPU` on a Core Ultra machine or `AUTO:GPU,CPU` on a box without an NPU. OpenVINO's `AUTO` tries the
+candidates in that order and falls back to the next one if a compile fails, so a model with ops the NPU cannot run
+lands on the GPU. The startup log shows the expansion, and `get_compiled_properties` reports it as `compile_device`.
+Large models can be faster on the GPU than on the NPU; to force a different order write it yourself, e.g.
+`"device": "AUTO:GPU,NPU,CPU"`, or name a single device such as `"GPU"`.
 
 `AUTO` also starts serving requests on the CPU while the accelerator compiles, then moves over. During that window
 `execution_devices` reads `["(CPU)"]`, parentheses meaning "temporary", and the module logs when inference has moved

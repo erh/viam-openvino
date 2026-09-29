@@ -129,11 +129,12 @@ def expand_auto(available: Sequence[str]) -> str:
     """Turn a bare AUTO into an explicit priority list over the accelerators that are actually present.
 
     OpenVINO's own AUTO only ever considers GPU and CPU; the NPU is ignored unless listed. This module prefers
-    GPU (widest op support), then NPU, then CPU. AUTO falls back to the next candidate if a compile fails.
+    NPU (fastest and most power-efficient for batch-1 vision models), then GPU, then CPU. AUTO falls back to the
+    next candidate if a compile fails, e.g. a model with ops the NPU does not support lands on the GPU.
     """
     gpus = sorted(d for d in available if d == "GPU" or d.startswith("GPU."))
     npus = sorted(d for d in available if d == "NPU" or d.startswith("NPU."))
-    order = gpus + npus + ["CPU"]
+    order = npus + gpus + ["CPU"]
     return "AUTO:" + ",".join(order)
 
 
@@ -190,7 +191,7 @@ class OpenVINOEngine:
         )
         if cfg.parsed_device.mode == "AUTO" and not cfg.parsed_device.devices:
             self.compile_device = expand_auto(available)
-            self.logger.info("device AUTO -> '%s' (GPU, then NPU, then CPU, among available devices)", self.compile_device)
+            self.logger.info("device AUTO -> '%s' (NPU, then GPU, then CPU, among available devices)", self.compile_device)
         self._check_device_availability(cfg.parsed_device, available)
 
         model = self.core.read_model(cfg.model_path)

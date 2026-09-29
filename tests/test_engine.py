@@ -266,8 +266,8 @@ def test_closed_engine_errors(tiny_ir, tmp_path):
     (["CPU"], "AUTO:CPU"),
     (["CPU", "GPU"], "AUTO:GPU,CPU"),
     (["CPU", "NPU"], "AUTO:NPU,CPU"),
-    (["CPU", "GPU", "NPU"], "AUTO:GPU,NPU,CPU"),
-    (["NPU", "GPU.1", "CPU", "GPU.0"], "AUTO:GPU.0,GPU.1,NPU,CPU"),
+    (["CPU", "GPU", "NPU"], "AUTO:NPU,GPU,CPU"),
+    (["NPU", "GPU.1", "CPU", "GPU.0"], "AUTO:NPU,GPU.0,GPU.1,CPU"),
 ])
 def test_expand_auto(available, expected):
     assert expand_auto(available) == expected
