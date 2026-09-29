@@ -96,7 +96,7 @@ if [ "$MODE" = "report" ]; then
 fi
 if [ $NEED_GPU = 0 ] && [ $NEED_NPU = 0 ]; then
     log "all required drivers are present"
-    RUN_USER="$(id -un)"
+    RUN_USER="${SUDO_USER:-$(id -un)}"   # under sudo, grant device access to the invoking user
 else
     # -------------------------------------------------------------- privileges
     SUDO=""
@@ -109,7 +109,7 @@ else
             exit 0
         fi
     fi
-    RUN_USER="$(id -un)"
+    RUN_USER="${SUDO_USER:-$(id -un)}"   # under sudo, grant device access to the invoking user
 
     if [ "$DISTRO_ID" != "ubuntu" ]; then
         warn "automatic installation is only implemented for Ubuntu (found '$DISTRO_ID'). See the README for manual steps:"
