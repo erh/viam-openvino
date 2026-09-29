@@ -13,8 +13,8 @@ This module provides two models:
 | [`erh:openvino:yolo`](#viamopenvinoyolo) | `rdk:service:vision` | Decodes YOLO v5 / v8 / v11 detection outputs (letterbox, decode, NMS) on top of any `mlmodel` service, not only this one. |
 | [`erh:openvino:diagnostics`](#viamopenvinodiagnostics) | `rdk:service:generic` | `list_devices`, `get_compiled_properties`, `benchmark` and `stats` via `DoCommand`. |
 
-Supported platforms: `linux/amd64` (CPU, Intel iGPU, Arc, NPU), `windows/amd64` (CPU, Intel iGPU, Arc, NPU),
-`linux/arm64` (CPU only, as a fallback runtime). macOS is supported for development from source only.
+Supported platforms: `linux/amd64` and `windows/amd64` (CPU, Intel iGPU, Arc, NPU). This is an Intel-only module;
+there is no arm64 build. macOS is supported for development from source only.
 
 ## Quick start: YOLOv8 detections from a camera
 
@@ -363,8 +363,8 @@ YOLOv8-shaped model with known boxes. A real YOLOv8n test runs when `YOLOV8N_ONN
 To run the module against a local viam-server without the registry, use the executable path
 `dist/main` (or `.venv/bin/python src/main.py` during development) as a local module in the machine config.
 
-Releases: pushing a tag such as `v0.1.0` runs `.github/workflows/deploy.yml`. Linux builds (`linux/amd64`,
-`linux/arm64`, the architectures listed in `meta.json`) run in Viam's cloud build through the Viam build action. The
-Windows build runs natively on a GitHub `windows-latest` runner (PyInstaller cannot cross-compile from the Linux cloud
-build containers), is smoke-tested with `dist/main.exe --selftest`, and is uploaded as `windows/amd64` for the same
-version with the viam CLI. Both jobs need the `viam_key_id` and `viam_key_value` repository secrets.
+Releases: pushing a tag such as `v0.1.0` runs `.github/workflows/deploy.yml`. The `linux/amd64` build runs in
+Viam's cloud build, started with the viam CLI and restricted to that platform with `--platforms`. The Windows build
+runs natively on a GitHub `windows-latest` runner (PyInstaller cannot cross-compile from the Linux cloud build
+containers), is smoke-tested with `dist/main.exe --selftest`, and is uploaded as `windows/amd64` for the same version.
+Both jobs need the `viam_key_id` and `viam_key_value` repository secrets.

@@ -1,8 +1,9 @@
 # Publishes the module to the Viam registry on version tags.
 #
-# Linux (amd64, arm64) is built by Viam's cloud build via viamrobotics/build-action, driven by the
-# "build" section of meta.json. Windows is built natively here on a windows runner (PyInstaller cannot
-# cross-compile from the Linux cloud-build containers) and uploaded with the viam CLI for the same version.
+# meta.json lists every supported platform (linux/amd64, windows/amd64). Linux is built by Viam's cloud
+# build; the job below does what viamrobotics/build-action does but passes --platforms linux/amd64 so the
+# Linux build containers do not attempt Windows (PyInstaller cannot cross-compile there). Windows is built
+# natively on a windows runner and uploaded with the viam CLI for the same version.
 #
 # Required repository secrets: viam_key_id, viam_key_value (an org API key with module write access).
 on:
@@ -17,15 +18,22 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: viamrobotics/build-action@v1
-        with:
-          # note: you can replace this line with 'version: ""' if
-          # you want to test the build process without deploying
-          version: ${{ github.ref_name }}
-          ref: ${{ github.sha }}
-          key-id: ${{ secrets.viam_key_id }}
-          key-value: ${{ secrets.viam_key_value }}
-          token: ${{ github.token }} # only required for private git repos
+      - name: Install viam CLI
+        run: |
+          curl -sSL -o viam https://storage.googleapis.com/packages.viam.com/apps/viam-cli/viam-cli-stable-linux-amd64
+          chmod +x viam && sudo mv viam /usr/local/bin/viam && viam version
+      - name: Update registry metadata and run the Linux cloud build
+        env:
+          VIAM_KEY_ID: ${{ secrets.viam_key_id }}
+          VIAM_KEY_VALUE: ${{ secrets.viam_key_value }}
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          viam login api-key --key-id "$VIAM_KEY_ID" --key "$VIAM_KEY_VALUE"
+          viam module update --module meta.json
+          BUILD_ID=$(viam module build start --module meta.json --version "$VERSION" --ref "$GITHUB_SHA" \
+                       --platforms linux/amd64 | head -n1)
+          echo "cloud build id: $BUILD_ID"
+          viam module build logs --id "$BUILD_ID" --wait --group-logs
 
   publish-windows:
     runs-on: windows-latest
