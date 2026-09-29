@@ -125,6 +125,18 @@ def _device_available(name: str, available: Sequence[str]) -> bool:
     return any(a == family or a.startswith(family + ".") for a in available) if "." not in name else False
 
 
+def expand_auto(available: Sequence[str]) -> str:
+    """Turn a bare AUTO into an explicit priority list over the accelerators that are actually present.
+
+    OpenVINO's own AUTO only ever considers GPU and CPU; the NPU is ignored unless listed. This module prefers
+    GPU (widest op support), then NPU, then CPU. AUTO falls back to the next candidate if a compile fails.
+    """
+    gpus = sorted(d for d in available if d == "GPU" or d.startswith("GPU."))
+    npus = sorted(d for d in available if d == "NPU" or d.startswith("NPU."))
+    order = gpus + npus + ["CPU"]
+    return "AUTO:" + ",".join(order)
+
+
 def list_devices(core: Optional[ov.Core] = None) -> Dict[str, Any]:
     core = core or ov.Core()
     devices: List[Dict[str, Any]] = []
@@ -163,6 +175,7 @@ class OpenVINOEngine:
         self.num_requests: int = 0
 
         self._pool: "queue.LifoQueue[ov.InferRequest]" = queue.LifoQueue()
+        self._auto_switch_pending = False  # AUTO is still serving on the CPU while the accelerator compiles
         self._closed = False
         self._logged_single_input_alias = False
         self._lock = threading.Lock()
@@ -175,6 +188,9 @@ class OpenVINOEngine:
             "OpenVINO %s; available devices: %s; requested device: %s",
             ov.get_version(), available or "[]", cfg.device,
         )
+        if cfg.parsed_device.mode == "AUTO" and not cfg.parsed_device.devices:
+            self.compile_device = expand_auto(available)
+            self.logger.info("device AUTO -> '%s' (GPU, then NPU, then CPU, among available devices)", self.compile_device)
         self._check_device_availability(cfg.parsed_device, available)
 
         model = self.core.read_model(cfg.model_path)
@@ -197,6 +213,7 @@ class OpenVINOEngine:
         self.compiled = self._compile_with_cache_recovery(model, compile_config)
 
         self.execution_devices = self.current_execution_devices()
+        self._auto_switch_pending = any(d.startswith("(") for d in self.execution_devices)
         self.loaded_from_cache = self._safe_property("LOADED_FROM_CACHE", None)
 
         if cfg.num_requests:
@@ -208,12 +225,13 @@ class OpenVINOEngine:
 
         self.logger.info(
             "compiled %s (%s) for '%s' -> execution devices %s; cache %s; compile time %.0f ms; "
-            "%d infer request(s); inputs=%s outputs=%s",
+            "%d infer request(s); inputs=%s outputs=%s%s",
             os.path.basename(cfg.model_path), cfg.model_format, cfg.device, self.execution_devices,
             "hit" if self.loaded_from_cache else ("miss" if self.loaded_from_cache is not None else "n/a"),
             self.compile_time_ms, self.num_requests,
             [(t.name, t.viam_dtype, t.shape) for t in self.inputs],
             [(t.name, t.viam_dtype, t.shape) for t in self.outputs],
+            " [serving on CPU until the accelerator compile finishes]" if self._auto_switch_pending else "",
         )
 
     def _check_device_availability(self, parsed: ParsedDevice, available: Sequence[str]) -> None:
@@ -381,7 +399,20 @@ class OpenVINOEngine:
         finally:
             self._pool.put(req)
         self.stats.record((time.perf_counter() - start) * 1000.0)
+        if self._auto_switch_pending:
+            self._note_auto_switch()
         return outputs
+
+    def _note_auto_switch(self) -> None:
+        devs = self.current_execution_devices()
+        if devs and not any(d.startswith("(") for d in devs):
+            self._auto_switch_pending = False
+            self.execution_devices = devs
+            self.logger.info("AUTO finished compiling for the accelerator; inference now runs on %s", devs)
+
+    @property
+    def warming_up_on_cpu(self) -> bool:
+        return self._auto_switch_pending
 
     def _prepare_inputs(self, input_tensors: Dict[str, np.ndarray]) -> Dict[str, np.ndarray]:
         expected = {spec.name: spec for spec in self.inputs}

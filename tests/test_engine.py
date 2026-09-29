@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 
 from models.config import MLModelConfig
-from models.engine import OpenVINOEngine, list_devices
+from models.engine import OpenVINOEngine, expand_auto, list_devices
 
 LOG = logging.getLogger("test")
 
@@ -260,3 +260,24 @@ def test_closed_engine_errors(tiny_ir, tmp_path):
     e.close()
     with pytest.raises(RuntimeError, match="closed"):
         e.infer({"images": np.zeros((1, 3, 8, 8), dtype=np.float32)})
+
+
+@pytest.mark.parametrize("available,expected", [
+    (["CPU"], "AUTO:CPU"),
+    (["CPU", "GPU"], "AUTO:GPU,CPU"),
+    (["CPU", "NPU"], "AUTO:NPU,CPU"),
+    (["CPU", "GPU", "NPU"], "AUTO:GPU,NPU,CPU"),
+    (["NPU", "GPU.1", "CPU", "GPU.0"], "AUTO:GPU.0,GPU.1,NPU,CPU"),
+])
+def test_expand_auto(available, expected):
+    assert expand_auto(available) == expected
+
+
+def test_bare_auto_expands_to_available_devices(tiny_ir, tmp_path):
+    e = make_engine(tiny_ir, tmp_path, device="AUTO")
+    try:
+        assert e.compile_device.startswith("AUTO:") and e.compile_device.endswith("CPU")
+        assert e.compiled_properties()["compile_device"] == e.compile_device
+        assert not e.warming_up_on_cpu or e.execution_devices  # CPU-only hosts have nothing to switch to
+    finally:
+        e.close()

@@ -163,6 +163,7 @@ def bench_device(args, device: str, cache_root: str) -> Dict[str, Any]:
 
     engine = make_engine(args, device, cache_dir)  # cold compile
     result["execution_devices_at_start"] = engine.execution_devices
+    result["compile_device"] = engine.compile_device
     result["compile_cold_ms"] = engine.compile_time_ms
     result["cold_from_cache"] = engine.loaded_from_cache
     result["num_requests"] = engine.num_requests
@@ -187,6 +188,14 @@ def bench_device(args, device: str, cache_root: str) -> Dict[str, Any]:
     try:
         for _ in range(args.warmup):
             engine.infer(feeds)
+        # AUTO serves on the CPU until the accelerator compile finishes; wait for the switch so the numbers
+        # describe the device AUTO actually chose.
+        t_wait = time.perf_counter()
+        while engine.warming_up_on_cpu and time.perf_counter() - t_wait < 120:
+            time.sleep(0.1)
+            engine.infer(feeds)
+        if result["execution_devices_at_start"] != engine.execution_devices:
+            result["note"] = f"AUTO warmed up on {','.join(result['execution_devices_at_start'])} for {time.perf_counter() - t_wait:.1f}s, then switched"
         lat = []
         t0 = time.perf_counter()
         for _ in range(args.iterations):
@@ -214,10 +223,9 @@ def bench_device(args, device: str, cache_root: str) -> Dict[str, Any]:
         else:
             result["concurrent_workers"] = 1
             result["concurrent_fps"] = result["serial_fps"]
-        # Under AUTO the first requests run on the CPU while the accelerator compiles ("(CPU)"), then move over.
         result["execution_devices"] = engine.current_execution_devices()
-        if result["execution_devices"] != result["execution_devices_at_start"]:
-            result["note"] = f"started on {result['execution_devices_at_start']}, ended on {result['execution_devices']}"
+        if any(d.startswith("(") for d in result["execution_devices"]):
+            result["note"] = "still on CPU warm-start when timed; accelerator compile did not finish in 120s"
     finally:
         engine.close()
     return result
@@ -285,7 +293,7 @@ def fmt(v: Any, nd: int = 2) -> str:
 
 def print_table(rows: List[Dict[str, Any]], markdown: bool) -> None:
     cols = [
-        ("device", "Device"), ("execution_devices", "Runs on"), ("serial_mean_ms", "mean ms"), ("serial_p50_ms", "p50 ms"),
+        ("device", "Device"), ("compile_device", "Resolved to"), ("execution_devices", "Runs on"), ("serial_mean_ms", "mean ms"), ("serial_p50_ms", "p50 ms"),
         ("serial_p99_ms", "p99 ms"), ("serial_fps", "FPS serial"), ("concurrent_fps", "FPS concurrent"),
         ("concurrent_workers", "workers"), ("compile_cold_ms", "compile ms"), ("compile_cached_ms", "cached compile ms"),
         ("cache_hit", "cache hit"), ("note", "note"), ("error", "error"),
@@ -297,6 +305,8 @@ def print_table(rows: List[Dict[str, Any]], markdown: bool) -> None:
             v = r.get(key)
             if isinstance(v, list):
                 v = ",".join(map(str, v))
+            if key == "compile_device" and v == r.get("device"):
+                v = "-"
             line.append(fmt(v))
         table.append(line)
     headers = [h for _, h in cols]

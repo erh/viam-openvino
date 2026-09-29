@@ -75,13 +75,18 @@ To confirm which devices OpenVINO can see on the machine, add a `erh:openvino:di
 | `preprocess` | object | none | no | On-device preprocessing, see below. |
 | `extra_config` | object | `{}` | no | Arbitrary OpenVINO properties passed to `compile_model`. Logged at startup. |
 
-**How `AUTO` picks a device.** OpenVINO's `AUTO` only considers the GPU and the CPU by default; the NPU is never
-selected unless it is listed explicitly, so on a Core Ultra machine use `"device": "NPU"` or
-`"device": "AUTO:NPU,GPU,CPU"` (candidates in priority order) to run on the NPU. `AUTO` also starts serving requests
-on the CPU while the accelerator compiles, then moves over; during that window `get_compiled_properties` reports
-`execution_devices: ["(CPU)"]`, parentheses meaning "temporary". Set `"extra_config": {"ENABLE_STARTUP_FALLBACK": "NO"}`
-to wait for the accelerator instead. The NPU needs static input shapes; use `input_shape` for models exported with
-dynamic dimensions.
+**How `AUTO` picks a device.** OpenVINO's own `AUTO` only considers GPU and CPU and ignores the NPU. This module
+therefore expands a bare `"device": "AUTO"` into an explicit priority list over the devices actually present:
+GPU(s) first (widest op support), then NPU, then CPU, for example `AUTO:GPU,NPU,CPU` on a Core Ultra machine or
+`AUTO:NPU,CPU` on a box without a usable GPU. OpenVINO's `AUTO` then tries the candidates in that order and falls
+back to the next one if a compile fails. The startup log shows the expansion, and `get_compiled_properties` reports it
+as `compile_device`. To force a different order write it yourself, e.g. `"device": "AUTO:NPU,GPU,CPU"`, or name a
+single device such as `"NPU"`.
+
+`AUTO` also starts serving requests on the CPU while the accelerator compiles, then moves over. During that window
+`execution_devices` reads `["(CPU)"]`, parentheses meaning "temporary", and the module logs when inference has moved
+to the accelerator. Set `"extra_config": {"ENABLE_STARTUP_FALLBACK": "NO"}` to wait for the accelerator instead. The
+NPU needs static input shapes; use `input_shape` for models exported with dynamic dimensions.
 
 Validation happens when the config is saved, not at first inference: a missing model, a missing `.bin`, a bad device
 string, an unknown hint or precision, or an inconsistent `preprocess` block all produce an error naming the attribute.
