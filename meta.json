@@ -12,19 +12,19 @@
     {
       "api": "rdk:service:mlmodel",
       "model": "erh:openvino:mlmodel",
-      "markdown_link": "README.md#viamopenvinomlmodel",
+      "markdown_link": "README.md#erhopenvinomlmodel",
       "short_description": "Run ML models with the OpenVINO runtime on Intel CPU, GPU and NPU."
     },
     {
       "api": "rdk:service:vision",
       "model": "erh:openvino:yolo",
-      "markdown_link": "README.md#viamopenvinoyolo",
+      "markdown_link": "README.md#erhopenvinoyolo",
       "short_description": "YOLO v5/v8/v11 decoding and NMS on top of any mlmodel service."
     },
     {
       "api": "rdk:service:generic",
       "model": "erh:openvino:diagnostics",
-      "markdown_link": "README.md#viamopenvinodiagnostics",
+      "markdown_link": "README.md#erhopenvinodiagnostics",
       "short_description": "Device discovery, compiled-model properties, benchmarking and latency stats."
     }
   ],
