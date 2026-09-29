@@ -219,6 +219,58 @@ def bench_device(args, device: str, cache_root: str) -> Dict[str, Any]:
     return result
 
 
+def diagnose_missing(device: str) -> List[str]:
+    """Explain why an Intel GPU or NPU is not visible to OpenVINO (Linux only)."""
+    family = device.split(".")[0]
+    if platform.system() != "Linux" or family not in ("GPU", "NPU"):
+        return []
+    import glob
+    import grp
+    import pwd
+
+    notes: List[str] = []
+    pci = []
+    for dev in glob.glob("/sys/bus/pci/devices/*"):
+        try:
+            if open(f"{dev}/vendor").read().strip() != "0x8086":
+                continue
+            cls = open(f"{dev}/class").read().strip()
+            did = open(f"{dev}/device").read().strip()
+        except OSError:
+            continue
+        if family == "GPU" and cls.startswith("0x03"):
+            pci.append(did)
+        if family == "NPU" and (cls.startswith("0x1200") or did in ("0x7d1d", "0xad1d", "0x643e", "0xb03e", "0xfd3e")):
+            pci.append(did)
+    notes.append(f"PCI: Intel {family} {'present ' + ','.join(pci) if pci else 'NOT found (disabled in BIOS/firmware, or not this platform)'}")
+
+    def libs(pattern):
+        return glob.glob(f"/usr/lib/x86_64-linux-gnu/{pattern}") + glob.glob(f"/usr/lib/{pattern}") + glob.glob(f"/usr/local/lib/{pattern}")
+
+    if family == "NPU":
+        nodes = glob.glob("/dev/accel/accel*")
+        mod = os.path.isdir("/sys/module/intel_vpu")
+        notes.append(f"kernel: {platform.release()}; intel_vpu module {'loaded' if mod else 'NOT loaded'}; /dev/accel {nodes or 'absent'}")
+        fw = glob.glob("/lib/firmware/updates/intel/vpu/*") + glob.glob("/lib/firmware/intel/vpu/*") + glob.glob("/lib/firmware/vpu/*")
+        notes.append(f"firmware files: {len(fw)} found" + ("" if fw else " (install intel-fw-npu and reboot)"))
+        drv = libs("libze_intel_npu.so*") or libs("libze_intel_vpu.so*")
+        notes.append(f"user-space driver libze_intel_npu: {'present' if drv else 'NOT installed (intel-level-zero-npu)'}")
+        for n in nodes:
+            st = os.stat(n)
+            notes.append(f"{n}: owner {pwd.getpwuid(st.st_uid).pw_name}:{grp.getgrgid(st.st_gid).gr_name} mode {oct(st.st_mode & 0o777)}; "
+                         f"{'readable' if os.access(n, os.R_OK | os.W_OK) else 'NOT accessible by this user (add to the render group, re-login)'}")
+    else:
+        nodes = glob.glob("/dev/dri/renderD*")
+        notes.append(f"/dev/dri render nodes: {nodes or 'absent (i915/xe kernel driver not bound; check dmesg)'}")
+        icd = glob.glob("/etc/OpenCL/vendors/intel*.icd")
+        notes.append(f"OpenCL ICD: {'present' if icd else 'NOT installed (intel-opencl-icd)'}; Level Zero GPU: {'present' if libs('libze_intel_gpu.so*') else 'NOT installed (libze-intel-gpu1)'}")
+        for n in nodes:
+            notes.append(f"{n}: {'accessible' if os.access(n, os.R_OK | os.W_OK) else 'NOT accessible by this user (add to the render group, re-login)'}")
+    notes.append(f"Level Zero loader libze_loader.so.1: {'present' if libs('libze_loader.so.1*') else 'NOT installed (libze1)'}")
+    notes.append("fix: sudo ./first_run.sh  (installs what is missing on Ubuntu; reboot afterwards if firmware or a kernel module changed)")
+    return notes
+
+
 def fmt(v: Any, nd: int = 2) -> str:
     if v is None:
         return "-"
@@ -304,6 +356,8 @@ def main() -> int:
             missing = [d for d in parsed.devices if d not in available and d.split(".")[0] not in available]
             if missing and not parsed.is_auto and not args.all:
                 print(f"[{device}] skipped: {missing} not in available devices {available} (drivers missing?)")
+                for note in diagnose_missing(device):
+                    print(f"[{device}]   {note}")
                 rows.append({"device": device, "error": f"unavailable: {','.join(missing)}"})
                 continue
             print(f"[{device}] compiling and benchmarking...", flush=True)
