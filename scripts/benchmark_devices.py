@@ -162,7 +162,7 @@ def bench_device(args, device: str, cache_root: str) -> Dict[str, Any]:
     shutil.rmtree(cache_dir, ignore_errors=True)
 
     engine = make_engine(args, device, cache_dir)  # cold compile
-    result["execution_devices"] = engine.execution_devices
+    result["execution_devices_at_start"] = engine.execution_devices
     result["compile_cold_ms"] = engine.compile_time_ms
     result["cold_from_cache"] = engine.loaded_from_cache
     result["num_requests"] = engine.num_requests
@@ -214,6 +214,10 @@ def bench_device(args, device: str, cache_root: str) -> Dict[str, Any]:
         else:
             result["concurrent_workers"] = 1
             result["concurrent_fps"] = result["serial_fps"]
+        # Under AUTO the first requests run on the CPU while the accelerator compiles ("(CPU)"), then move over.
+        result["execution_devices"] = engine.current_execution_devices()
+        if result["execution_devices"] != result["execution_devices_at_start"]:
+            result["note"] = f"started on {result['execution_devices_at_start']}, ended on {result['execution_devices']}"
     finally:
         engine.close()
     return result
@@ -284,7 +288,7 @@ def print_table(rows: List[Dict[str, Any]], markdown: bool) -> None:
         ("device", "Device"), ("execution_devices", "Runs on"), ("serial_mean_ms", "mean ms"), ("serial_p50_ms", "p50 ms"),
         ("serial_p99_ms", "p99 ms"), ("serial_fps", "FPS serial"), ("concurrent_fps", "FPS concurrent"),
         ("concurrent_workers", "workers"), ("compile_cold_ms", "compile ms"), ("compile_cached_ms", "cached compile ms"),
-        ("cache_hit", "cache hit"), ("error", "error"),
+        ("cache_hit", "cache hit"), ("note", "note"), ("error", "error"),
     ]
     table = []
     for r in rows:
@@ -364,6 +368,8 @@ def main() -> int:
             try:
                 r = bench_device(args, device, cache_root)
                 rows.append(r)
+                if r.get("note"):
+                    print(f"[{device}] {r['note']}")
                 print(
                     f"[{device}] runs on {r['execution_devices']}: mean {r['serial_mean_ms']:.2f} ms, p99 {r['serial_p99_ms']:.2f} ms, "
                     f"{r['serial_fps']:.1f} fps serial, {r['concurrent_fps']:.1f} fps with {r['concurrent_workers']} workers; "

@@ -196,8 +196,7 @@ class OpenVINOEngine:
             self.logger.info("extra OpenVINO properties: %s", cfg.extra_config)
         self.compiled = self._compile_with_cache_recovery(model, compile_config)
 
-        self.execution_devices = self._safe_property("EXECUTION_DEVICES", [])
-        self.execution_devices = [str(d) for d in self.execution_devices]
+        self.execution_devices = self.current_execution_devices()
         self.loaded_from_cache = self._safe_property("LOADED_FROM_CACHE", None)
 
         if cfg.num_requests:
@@ -349,6 +348,14 @@ class OpenVINOEngine:
             if os.path.isdir(path):
                 shutil.rmtree(path, ignore_errors=True)
 
+    def current_execution_devices(self) -> List[str]:
+        """Devices running inference right now. Under AUTO this starts as "(CPU)" (CPU serving requests while
+        the accelerator compiles) and later switches to the selected device, so callers may re-query."""
+        devs = self._safe_property("EXECUTION_DEVICES", [])
+        if isinstance(devs, str):  # some plugins return a plain string, e.g. "NPU"
+            return [devs]
+        return [str(d) for d in devs]
+
     def _safe_property(self, name: str, default: Any) -> Any:
         try:
             return self.compiled.get_property(name)
@@ -427,6 +434,8 @@ class OpenVINOEngine:
 
     # ------------------------------------------------------------ diagnostics
     def compiled_properties(self) -> Dict[str, Any]:
+        if self.compiled is not None:
+            self.execution_devices = self.current_execution_devices()
         out: Dict[str, Any] = {
             "requested_device": self.cfg.device,
             "compile_device": self.compile_device,
@@ -491,6 +500,7 @@ class OpenVINOEngine:
             latencies.append((time.perf_counter() - t) * 1000.0)
         wall = time.perf_counter() - wall_start
         result: Dict[str, Any] = summarize_ms(np.asarray(latencies))
+        self.execution_devices = self.current_execution_devices()
         result.update({
             "iterations": len(latencies),
             "warmup": max(0, warmup),
