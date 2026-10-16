@@ -60,5 +60,6 @@ jobs:
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
           viam.exe login api-key --key-id "$VIAM_KEY_ID" --key "$VIAM_KEY_VALUE"
-          # meta.json (rewritten by build.sh to point at dist/main.exe) is read from the working directory.
+          # The CLI reads the repo's meta.json, unchanged by build.sh, so the module's entrypoint stays
+          # "dist/main" for every platform (on Windows it resolves to dist/main.exe).
           viam.exe module upload --version "$VERSION" --platform windows/amd64 --upload dist/archive.tar.gz

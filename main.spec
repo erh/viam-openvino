@@ -1,5 +1,7 @@
 # -*- mode: python ; coding: utf-8 -*-
 # PyInstaller spec for the erh:openvino module binary. Invoked by build.sh.
+import os
+
 from PyInstaller.utils.hooks import collect_all
 
 block_cipher = None
@@ -25,6 +27,12 @@ a = Analysis(
     noarchive=False,
 )
 
+# Use the host's C++ runtime instead of the build container's. The bootloader puts the bundle first on
+# LD_LIBRARY_PATH, so a bundled libstdc++ also wins for the Intel GPU/NPU drivers that OpenVINO loads at
+# runtime. Current drivers need GLIBCXX_3.4.32, the cloud build ships an older one, the drivers fail to
+# load, and OpenVINO silently reports only CPU.
+_HOST_RUNTIME_LIBS = ("libstdc++.so", "libgcc_s.so")
+a.binaries = [b for b in a.binaries if not os.path.basename(b[0]).startswith(_HOST_RUNTIME_LIBS)]
 
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 
