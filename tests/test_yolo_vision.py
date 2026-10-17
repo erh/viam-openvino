@@ -13,7 +13,7 @@ from viam.services.mlmodel import Metadata, MLModel, TensorInfo
 from viam.utils import dict_to_struct
 
 from models.openvino_mlmodel import OpenVINOMLModel
-from models.yolo_vision import YoloConfig, YoloVision
+from models.yolo_vision import YoloConfig, YoloVision, _pick_color_image
 
 
 def make_config(name="yolo", **attrs):
@@ -222,3 +222,25 @@ async def test_yolo_forwards_diagnostics(fake_yolo_ir, labels_file, tmp_path):
             await v.do_command({"command": "nope"})
     finally:
         await ml.close()
+
+
+def test_pick_color_image_prefers_color_over_first():
+    depth = NamedImage("depth", b"DEPTHMAP", CameraMimeType.VIAM_RAW_DEPTH)
+    color = NamedImage("color", b"x", CameraMimeType.JPEG)
+    unnamed = NamedImage("", b"y", CameraMimeType.JPEG)
+    assert _pick_color_image([depth, color]) is color
+    assert _pick_color_image([depth, unnamed]) is unnamed
+    assert _pick_color_image([depth]) is None
+
+
+class FakeRGBDCamera(FakeCamera):
+    async def get_images(self, *, filter_source_names=None, extra=None, timeout=None, **kwargs):
+        depth = NamedImage("depth", b"DEPTHMAP" + bytes(16), CameraMimeType.VIAM_RAW_DEPTH)
+        return [depth, NamedImage("color", self.image.data, self.image.mime_type)], ResponseMetadata()
+
+
+async def test_rgbd_camera_uses_color_image(labels_file):
+    # Cameras like the RealSense return depth and color together; the model used to get images[0], the depth map.
+    ml = FakeMLModel("m", v8_output([(32, 32, 10, 10, 0, 0.9)], C=3), [1, 3, 64, 64], label_path=labels_file)
+    v = YoloVision.new(make_config(mlmodel_name="m", camera_name="rs"), deps(ml, FakeRGBDCamera("rs", make_image(64, 64))))
+    assert len(await v.get_detections_from_camera("rs")) == 1

@@ -13,7 +13,7 @@ from viam.components.camera import Camera
 from viam.errors import NotSupportedError
 from viam.logging import getLogger
 from viam.media.utils.pil import viam_to_pil_image
-from viam.media.video import ViamImage
+from viam.media.video import CameraMimeType, ViamImage
 from viam.proto.app.robot import ComponentConfig
 from viam.proto.common import PointCloudObject, ResourceName
 from viam.proto.service.vision import Classification, Detection, GetPropertiesResponse
@@ -29,6 +29,7 @@ from .config import load_labels
 from .yolo_decode import (
     YOLO_VERSIONS,
     InputFormat,
+    LetterboxInfo,
     decode,
     detect_version,
     letterbox,
@@ -100,6 +101,7 @@ def _float_attr(attrs: Mapping[str, Any], key: str, default: float, lo: float, h
 
 class YoloVision(Vision, EasyResource):
     MODEL: ClassVar[Model] = "erh:openvino:yolo"
+    CONFIG_CLASS: ClassVar[type] = YoloConfig
 
     def __init__(self, name: str) -> None:
         super().__init__(name)
@@ -118,13 +120,13 @@ class YoloVision(Vision, EasyResource):
 
     @classmethod
     def validate_config(cls, config: ComponentConfig) -> Tuple[Sequence[str], Sequence[str]]:
-        cfg = YoloConfig(struct_to_dict(config.attributes))
+        cfg = cls.CONFIG_CLASS(struct_to_dict(config.attributes))
         required = [cfg.mlmodel_name]
         optional = [cfg.camera_name] if cfg.camera_name else []
         return required, optional
 
     def reconfigure(self, config: ComponentConfig, dependencies: Mapping[ResourceName, ResourceBase]) -> None:
-        cfg = YoloConfig(struct_to_dict(config.attributes))
+        cfg = self.CONFIG_CLASS(struct_to_dict(config.attributes))
         ml = dependencies.get(MLModel.get_resource_name(cfg.mlmodel_name))
         if ml is None:
             raise ValueError(f"mlmodel '{cfg.mlmodel_name}' was not found in dependencies")
@@ -156,7 +158,7 @@ class YoloVision(Vision, EasyResource):
             input_size = self.cfg.input_size
             if input_size is None:
                 input_size = _spatial_from_shape(list(inp.shape), self.cfg.input_format.layout)
-            if input_size is None:
+            if input_size is None and self._input_size_required():
                 raise ValueError(
                     f"could not determine the model input size from metadata shape {list(inp.shape)}; set input_size"
                 )
@@ -183,21 +185,43 @@ class YoloVision(Vision, EasyResource):
                 "version": None,  # resolved on first inference
             }
             self.logger.info(
-                "yolo '%s': mlmodel input '%s' size %s, %d labels, outputs %s",
-                self.name, inp.name, input_size, len(labels), self._model_info["output_names"],
+                "%s '%s': mlmodel input '%s' size %s, %d labels, outputs %s",
+                self.MODEL, self.name, inp.name, input_size, len(labels), self._model_info["output_names"],
             )
             return self._model_info
 
+    def _input_size_required(self) -> bool:
+        """Whether the service resizes images itself, and so must know the model input size."""
+        return True
+
     # ------------------------------------------------------------ detection
-    async def _detect(self, image: ViamImage) -> List[Detection]:
+    async def _infer(self, image: ViamImage) -> Tuple[Mapping[str, Any], LetterboxInfo, Dict[str, Any], np.ndarray]:
+        """Letterbox ``image`` and run the mlmodel. Returns (outputs, letterbox info, model info, RGB array)."""
         assert self.cfg is not None and self.mlmodel is not None
-        cfg = self.cfg
         info = await self._get_model_info()
-        pil = viam_to_pil_image(image).convert("RGB")
-        rgb = np.asarray(pil)
+        rgb = np.asarray(viam_to_pil_image(image).convert("RGB"))
         canvas, lb = letterbox(rgb, info["input_size"])
-        tensor = to_model_input(canvas, cfg.input_format)
+        tensor = to_model_input(canvas, self.cfg.input_format)
         outputs = await self.mlmodel.infer({info["input_name"]: tensor})
+        return outputs, lb, info, rgb
+
+    def _to_detection(self, box: Sequence[float], score: float, name: str, lb: LetterboxInfo) -> Detection:
+        x1, y1, x2, y2 = (float(v) for v in box)
+        return Detection(
+            x_min=int(round(x1)), y_min=int(round(y1)), x_max=int(round(x2)), y_max=int(round(y2)),
+            x_min_normalized=x1 / lb.orig_w, y_min_normalized=y1 / lb.orig_h,
+            x_max_normalized=x2 / lb.orig_w, y_max_normalized=y2 / lb.orig_h,
+            confidence=float(score), class_name=name,
+        )
+
+    def _label(self, info: Mapping[str, Any], cid: int) -> str:
+        labels = info["labels"]
+        return labels[cid] if 0 <= cid < len(labels) else str(int(cid))
+
+    async def _detect(self, image: ViamImage) -> List[Detection]:
+        assert self.cfg is not None
+        cfg = self.cfg
+        outputs, lb, info, _ = await self._infer(image)
         raw = _pick_detection_output(outputs, info["output_names"])
         version = info["version"]
         if version is None:
@@ -210,24 +234,15 @@ class YoloVision(Vision, EasyResource):
         keep = nms(boxes, scores, class_ids, cfg.iou_threshold, cfg.max_detections)
         boxes, scores, class_ids = boxes[keep], scores[keep], class_ids[keep]
         boxes = unletterbox(boxes, lb)
-        labels = info["labels"]
         dets: List[Detection] = []
         for box, score, cid in zip(boxes, scores, class_ids):
-            name = labels[cid] if 0 <= cid < len(labels) else str(int(cid))
+            name = self._label(info, cid)
             if cfg.class_filter is not None and name not in cfg.class_filter:
                 continue
-            x1, y1, x2, y2 = (float(v) for v in box)
-            dets.append(
-                Detection(
-                    x_min=int(round(x1)), y_min=int(round(y1)), x_max=int(round(x2)), y_max=int(round(y2)),
-                    x_min_normalized=x1 / lb.orig_w, y_min_normalized=y1 / lb.orig_h,
-                    x_max_normalized=x2 / lb.orig_w, y_max_normalized=y2 / lb.orig_h,
-                    confidence=float(score), class_name=name,
-                )
-            )
+            dets.append(self._to_detection(box, score, name, lb))
         return dets
 
-    async def _get_camera_image(self, camera_name: str) -> ViamImage:
+    def _camera(self, camera_name: str) -> Tuple[str, Camera]:
         assert self.cfg is not None
         name = camera_name or self.cfg.camera_name
         if not name:
@@ -237,11 +252,15 @@ class YoloVision(Vision, EasyResource):
             raise ValueError(
                 f"vision '{self.name}': camera '{name}' is not a configured dependency; set camera_name to '{name}'"
             )
+        return name, cam
+
+    async def _get_camera_image(self, camera_name: str) -> ViamImage:
+        name, cam = self._camera(camera_name)
         images, _ = await cam.get_images()
-        if not images:
-            raise RuntimeError(f"camera '{name}' returned no images")
-        first = images[0]
-        return ViamImage(first.data, first.mime_type)
+        color = _pick_color_image(images)
+        if color is None:
+            raise RuntimeError(f"camera '{name}' returned no color image (got {[(i.name, i.mime_type) for i in images]})")
+        return ViamImage(color.data, color.mime_type)
 
     # ------------------------------------------------------------ vision API
     async def get_detections(self, image: ViamImage, *, extra: Optional[Mapping[str, ValueTypes]] = None, timeout: Optional[float] = None) -> List[Detection]:
@@ -273,13 +292,13 @@ class YoloVision(Vision, EasyResource):
         return result
 
     async def get_classifications(self, image: ViamImage, count: int, *, extra: Optional[Mapping[str, ValueTypes]] = None, timeout: Optional[float] = None) -> List[Classification]:
-        raise NotSupportedError(f"vision '{self.name}' (erh:openvino:yolo) does not support classifications")
+        raise NotSupportedError(f"vision '{self.name}' ({self.MODEL}) does not support classifications")
 
     async def get_classifications_from_camera(self, camera_name: str, count: int, *, extra: Optional[Mapping[str, ValueTypes]] = None, timeout: Optional[float] = None) -> List[Classification]:
-        raise NotSupportedError(f"vision '{self.name}' (erh:openvino:yolo) does not support classifications")
+        raise NotSupportedError(f"vision '{self.name}' ({self.MODEL}) does not support classifications")
 
     async def get_object_point_clouds(self, camera_name: str, *, extra: Optional[Mapping[str, ValueTypes]] = None, timeout: Optional[float] = None) -> List[PointCloudObject]:
-        raise NotSupportedError(f"vision '{self.name}' (erh:openvino:yolo) does not support object point clouds")
+        raise NotSupportedError(f"vision '{self.name}' ({self.MODEL}) does not support object point clouds")
 
     async def get_properties(self, *, extra: Optional[Mapping[str, ValueTypes]] = None, timeout: Optional[float] = None) -> GetPropertiesResponse:
         return GetPropertiesResponse(
@@ -293,7 +312,7 @@ class YoloVision(Vision, EasyResource):
         cmd = command.get("command")
         if cmd == "model_info":
             info = dict(await self._get_model_info())
-            info["input_size"] = list(info["input_size"])
+            info["input_size"] = list(info["input_size"]) if info["input_size"] else None
             info["labels_count"] = len(info.pop("labels"))
             info["version"] = info["version"] or self.cfg.yolo_version  # type: ignore[union-attr]
             return info
@@ -312,6 +331,19 @@ def _spatial_from_shape(shape: List[int], layout: str) -> Optional[Tuple[int, in
         h, w = shape[1], shape[2]
     if h > 0 and w > 0:
         return (int(h), int(w))
+    return None
+
+
+def _pick_color_image(images: Sequence[Any]) -> Optional[Any]:
+    """Pick the color image from a camera's ``get_images`` result. RGBD cameras such as the RealSense return
+    color and depth together, in no guaranteed order: prefer a source named color/rgb, then anything that is
+    not a depth image."""
+    for img in images:
+        if any(k in (img.name or "").lower() for k in ("color", "rgb")):
+            return img
+    for img in images:
+        if img.mime_type != CameraMimeType.VIAM_RAW_DEPTH and "depth" not in (img.name or "").lower():
+            return img
     return None
 
 

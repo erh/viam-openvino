@@ -5,12 +5,13 @@ Module ID: `erh:viam-openvino` (source: <https://github.com/erh/viam-openvino>).
 Run ML models on Intel hardware (CPU, integrated GPU, Arc GPU, and the NPU in Core Ultra chips) from a
 Viam machine, using the [OpenVINO](https://docs.openvino.ai/) runtime.
 
-This module provides two models:
+This module provides these models:
 
 | Model | API | Purpose |
 |---|---|---|
 | [`erh:openvino:mlmodel`](#viamopenvinomlmodel) | `rdk:service:mlmodel` | Runs ONNX, OpenVINO IR, TFLite, TensorFlow and PaddlePaddle models. Works with the stock `vision:mlmodel` service and anything else that speaks the `mlmodel` API. |
 | [`erh:openvino:yolo`](#viamopenvinoyolo) | `rdk:service:vision` | Decodes YOLO v5 / v8 / v11 detection outputs (letterbox, decode, NMS) on top of any `mlmodel` service, not only this one. |
+| [`erh:openvino:rf-detr`](#erhopenvinorf-detr) | `rdk:service:vision` | Decodes [RF-DETR](https://github.com/roboflow/rf-detr) detection outputs on top of any `mlmodel` service. |
 | [`erh:openvino:diagnostics`](#viamopenvinodiagnostics) | `rdk:service:generic` | `list_devices`, `get_compiled_properties`, `benchmark` and `stats` via `DoCommand`. |
 
 Supported platforms: `linux/amd64` and `windows/amd64` (CPU, Intel iGPU, Arc, NPU). This is an Intel-only module;
@@ -196,7 +197,8 @@ any implementation of that API, not only `erh:openvino:mlmodel`.
 
 ### Behavior
 
-1. Get the image from the request or the camera.
+1. Get the image from the request or the camera. When a camera returns several images (an RGBD camera returns color
+   and depth), the one named `color` or `rgb` is used, otherwise the first non-depth image.
 2. Letterbox to the model input size (aspect ratio preserved, padding value 114).
 3. Convert to `input_format` and call `Infer`.
 4. Decode: v8/v11 outputs are `[1, 4 + C, N]` with `cx, cy, w, h` and class scores; v5 outputs are `[1, N, 5 + C]`
@@ -210,6 +212,82 @@ any implementation of that API, not only `erh:openvino:mlmodel`.
 `DoCommand {"command": "model_info"}` reports the input name and size, output names and shapes, label count, and the
 YOLO version in use. The mlmodel diagnostics commands (`list_devices`, `get_compiled_properties`, `benchmark`, `stats`)
 are also accepted and forwarded to the configured `mlmodel_name` when it is a `erh:openvino:mlmodel` in this module.
+
+## `erh:openvino:rf-detr`
+
+A vision service for [RF-DETR](https://github.com/roboflow/rf-detr), Roboflow's real-time transformer detector. Like
+`erh:openvino:yolo` it depends on an `mlmodel` service, works with any implementation of that API, and supports the
+same cameras, labels, `class_filter` and `DoCommand` diagnostics. Only preprocessing and decoding differ.
+
+Export a model with the `rfdetr` Python package (`pip install "rfdetr[onnx]"`), pretrained or fine-tuned:
+
+```python
+from rfdetr import RFDETRSmall
+RFDETRSmall().export(output_dir="rfdetr-small")  # writes rfdetr-small/rfdetr-small.onnx
+```
+
+The exported model has one input, `input` (`float32 [1, 3, H, W]`, for example 384 for Nano, 512 for Small and 576
+for Medium), and two outputs: `dets` (`[1, Q, 4]` normalized `cx, cy, w, h`) and `labels` (`[1, Q, C]` class logits).
+The segmentation variants add a `masks` output, which this service ignores.
+
+**Labels are indexed by class slot.** Line *i* of the labels file names slot *i*. The COCO-pretrained checkpoints use
+the 91 COCO category ids, so slot 0 and the unused ids need placeholder lines (`N/A`), with `person` on line 1. A
+fine-tuned model's slots follow its training dataset.
+
+### Attributes
+
+| Attribute | Type | Default | Required | Description |
+|---|---|---|---|---|
+| `mlmodel_name` | string | | yes | Name of the `mlmodel` service to call. |
+| `camera_name` | string | | no | Default camera for `GetDetectionsFromCamera` and `CaptureAllFromCamera`. |
+| `input_size` | `[H, W]` | from metadata | no | Model input size. Only needed when the mlmodel reports dynamic spatial dimensions and `input_format` is `NCHW_f32_rgb`. |
+| `confidence_threshold` | float | `0.5` | no | |
+| `max_detections` | int | `100` | no | Applied after `class_filter`. |
+| `class_filter` | `[string]` | all | no | Only return these labels. |
+| `label_path` | string | from mlmodel metadata | no | Overrides the labels the mlmodel advertises. |
+| `input_format` | string | `"NCHW_f32_rgb"` | no | `NCHW_f32_rgb`: the service resizes and normalizes. `NHWC_u8_rgb`: raw pixels at the camera's resolution, for an mlmodel with on-device `preprocess` (below). |
+
+`yolo_version` and `iou_threshold` are rejected: RF-DETR predicts one query per object and needs no NMS.
+
+### Behavior
+
+1. Get the image from the request or the camera (the color image, for RGBD cameras).
+2. Stretch it to the model input size (RF-DETR does not letterbox) with bilinear, half-pixel, non-antialiased
+   resampling, as RF-DETR does in training, and normalize with the ImageNet mean and standard deviation.
+3. Call `Infer`, apply a sigmoid to the logits, and keep the top-scoring (query, class) pairs above
+   `confidence_threshold`.
+4. Scale the normalized boxes to the original image and clamp them.
+
+To move step 2 onto the device, configure `preprocess` on the `erh:openvino:mlmodel` and set
+`"input_format": "NHWC_u8_rgb"` on this service:
+
+```json
+"preprocess": {
+  "tensor_element_type": "u8",
+  "tensor_layout": "NHWC",
+  "tensor_color_format": "RGB",
+  "model_layout": "NCHW",
+  "model_color_format": "RGB",
+  "resize": "linear",
+  "mean": [123.675, 116.28, 103.53],
+  "scale": [58.395, 57.12, 57.375]
+}
+```
+
+This gives the same detections and is the fastest option on GPU. It does not work on the NPU, which needs static input
+shapes; use the default `input_format` there.
+
+Measured on a Core Ultra X7 358H (Arc B390 iGPU) with the COCO-pretrained models, inference only, in ms. Detections
+match the `rfdetr` package's own `predict()` on the same images.
+
+| Model | Input | CPU | GPU | GPU with on-device `preprocess` | NPU |
+|---|---|---|---|---|---|
+| RF-DETR Nano | 384 | 116 | 3.3 | 3.4 | 54 |
+| RF-DETR Small | 512 | 209 | 5.6 | 4.9 | 59 |
+| RF-DETR Medium | 576 | 267 | 6.7 | 6.0 | 64 |
+
+The "GPU with on-device `preprocess`" column includes the resize and normalization; the others exclude the 6–12 ms the
+service spends doing that on the CPU for a 1080x810 image.
 
 ## `erh:openvino:diagnostics`
 

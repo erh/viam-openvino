@@ -22,6 +22,12 @@
       "short_description": "YOLO v5/v8/v11 decoding and NMS on top of any mlmodel service."
     },
     {
+      "api": "rdk:service:vision",
+      "model": "erh:openvino:rf-detr",
+      "markdown_link": "README.md#erhopenvinorf-detr",
+      "short_description": "RF-DETR (Roboflow) detection decoding on top of any mlmodel service."
+    },
+    {
       "api": "rdk:service:generic",
       "model": "erh:openvino:diagnostics",
       "markdown_link": "README.md#erhopenvinodiagnostics",
