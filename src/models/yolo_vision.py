@@ -158,7 +158,7 @@ class YoloVision(Vision, EasyResource):
             input_size = self.cfg.input_size
             if input_size is None:
                 input_size = _spatial_from_shape(list(inp.shape), self.cfg.input_format.layout)
-            if input_size is None:
+            if input_size is None and self._input_size_required():
                 raise ValueError(
                     f"could not determine the model input size from metadata shape {list(inp.shape)}; set input_size"
                 )
@@ -185,10 +185,14 @@ class YoloVision(Vision, EasyResource):
                 "version": None,  # resolved on first inference
             }
             self.logger.info(
-                "yolo '%s': mlmodel input '%s' size %s, %d labels, outputs %s",
-                self.name, inp.name, input_size, len(labels), self._model_info["output_names"],
+                "%s '%s': mlmodel input '%s' size %s, %d labels, outputs %s",
+                self.MODEL, self.name, inp.name, input_size, len(labels), self._model_info["output_names"],
             )
             return self._model_info
+
+    def _input_size_required(self) -> bool:
+        """Whether the service resizes images itself, and so must know the model input size."""
+        return True
 
     # ------------------------------------------------------------ detection
     async def _infer(self, image: ViamImage) -> Tuple[Mapping[str, Any], LetterboxInfo, Dict[str, Any], np.ndarray]:
@@ -288,13 +292,13 @@ class YoloVision(Vision, EasyResource):
         return result
 
     async def get_classifications(self, image: ViamImage, count: int, *, extra: Optional[Mapping[str, ValueTypes]] = None, timeout: Optional[float] = None) -> List[Classification]:
-        raise NotSupportedError(f"vision '{self.name}' (erh:openvino:yolo) does not support classifications")
+        raise NotSupportedError(f"vision '{self.name}' ({self.MODEL}) does not support classifications")
 
     async def get_classifications_from_camera(self, camera_name: str, count: int, *, extra: Optional[Mapping[str, ValueTypes]] = None, timeout: Optional[float] = None) -> List[Classification]:
-        raise NotSupportedError(f"vision '{self.name}' (erh:openvino:yolo) does not support classifications")
+        raise NotSupportedError(f"vision '{self.name}' ({self.MODEL}) does not support classifications")
 
     async def get_object_point_clouds(self, camera_name: str, *, extra: Optional[Mapping[str, ValueTypes]] = None, timeout: Optional[float] = None) -> List[PointCloudObject]:
-        raise NotSupportedError(f"vision '{self.name}' (erh:openvino:yolo) does not support object point clouds")
+        raise NotSupportedError(f"vision '{self.name}' ({self.MODEL}) does not support object point clouds")
 
     async def get_properties(self, *, extra: Optional[Mapping[str, ValueTypes]] = None, timeout: Optional[float] = None) -> GetPropertiesResponse:
         return GetPropertiesResponse(
@@ -308,7 +312,7 @@ class YoloVision(Vision, EasyResource):
         cmd = command.get("command")
         if cmd == "model_info":
             info = dict(await self._get_model_info())
-            info["input_size"] = list(info["input_size"])
+            info["input_size"] = list(info["input_size"]) if info["input_size"] else None
             info["labels_count"] = len(info.pop("labels"))
             info["version"] = info["version"] or self.cfg.yolo_version  # type: ignore[union-attr]
             return info
