@@ -16,6 +16,9 @@
 # which would be far worse than running the module without an accelerator. Failures are logged and the
 # module itself reports missing devices again at startup.
 
+# viam-server may start this with an empty PATH.
+PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin${PATH:+:$PATH}"; export PATH
+
 MODE="${VIAM_OPENVINO_DRIVERS:-auto}"
 NPU_DRIVER_VERSION="${VIAM_OPENVINO_NPU_DRIVER_VERSION:-latest}"
 TAG="[openvino first_run]"
@@ -68,7 +71,13 @@ fi
 
 # ------------------------------------------------------------------ what is already installed
 have_lib() { ldconfig -p 2>/dev/null | grep -q "$1" || ls /usr/lib/x86_64-linux-gnu/"$1"* /usr/lib/"$1"* >/dev/null 2>&1; }
-gpu_runtime_ok() { ls /etc/OpenCL/vendors/intel*.icd >/dev/null 2>&1 || have_lib libze_intel_gpu; }
+gpu_runtime_files() { ls /etc/OpenCL/vendors/intel*.icd >/dev/null 2>&1 || have_lib libze_intel_gpu; }
+# Installed is not enough: a runtime older than the GPU (e.g. 24.39 from Intel's noble repo on Panther Lake)
+# loads fine but exposes no device. Require clinfo to list a device under an Intel graphics platform.
+gpu_runtime_ok() {
+    gpu_runtime_files && command -v clinfo >/dev/null 2>&1 \
+        && clinfo -l 2>/dev/null | awk '/^Platform/ { p = ($0 ~ /Intel.*Graphics/) } p && /Device/ { f = 1 } END { exit !f }'
+}
 npu_runtime_ok() { have_lib libze_intel_vpu || have_lib libze_intel_npu; }
 npu_kernel_ok()  { ls /dev/accel/accel* >/dev/null 2>&1; }
 npu_module_available() { modinfo intel_vpu >/dev/null 2>&1; }
@@ -76,7 +85,9 @@ ze_loader_ok()   { have_lib libze_loader.so.1; }
 
 NEED_GPU=0; NEED_NPU=0
 if [ $HAVE_GPU = 1 ]; then
-    if gpu_runtime_ok; then log "GPU compute runtime already installed"; else NEED_GPU=1; log "GPU compute runtime (OpenCL / Level Zero) is missing"; fi
+    if gpu_runtime_ok; then log "GPU compute runtime installed and lists the GPU (clinfo)"
+    elif gpu_runtime_files; then NEED_GPU=1; log "GPU compute runtime is installed but clinfo lists no Intel GPU (clinfo missing, or runtime too old for this GPU)"
+    else NEED_GPU=1; log "GPU compute runtime (OpenCL / Level Zero) is missing"; fi
 fi
 if [ $HAVE_NPU = 1 ]; then
     if npu_runtime_ok; then log "NPU user-space driver already installed"; else NEED_NPU=1; log "NPU user-space driver is missing"; fi
@@ -163,7 +174,51 @@ else
             apt_install intel-opencl-icd clinfo && ok=1
             apt_install libze-intel-gpu1 libze1 >/dev/null 2>&1 || true
         fi
-        if [ $ok = 1 ] && gpu_runtime_ok; then log "GPU compute runtime installed"; else warn "GPU compute runtime installation failed; see README for manual steps"; fi
+        if ! gpu_runtime_ok; then
+            # Distro/Intel apt packages can lag new GPUs; fall back to the latest intel/compute-runtime release
+            # plus the intel-graphics-compiler packages its release notes name, checksum-verified.
+            log "apt GPU runtime does not expose the GPU; installing the latest release from github.com/intel/compute-runtime..."
+            command -v clinfo >/dev/null 2>&1 || apt_install clinfo || true
+            tmpd="$(mktemp -d /tmp/gpu-runtime.XXXXXX)"
+            if fetch https://api.github.com/repos/intel/compute-runtime/releases/latest "$tmpd/cr.json"; then
+                cr_urls="$(grep -oE '"browser_download_url": *"[^"]*(\.deb|\.sum)"' "$tmpd/cr.json" | sed 's/.*"\(http[^"]*\)"/\1/')"
+                igc_urls="$(grep -oE 'https://github.com/intel/intel-graphics-compiler/releases/download/[^ "\\]*\.deb' "$tmpd/cr.json" | sort -u)"
+                igc_tag="$(echo "$igc_urls" | sed -n 's|.*/releases/download/\([^/]*\)/.*|\1|p' | head -n 1)"
+                # IGC publishes no sum file; its release assets carry a "digest": "sha256:..." field.
+                if [ -n "$igc_tag" ] && fetch "https://api.github.com/repos/intel/intel-graphics-compiler/releases/tags/$igc_tag" "$tmpd/igc.json"; then
+                    # shellcheck disable=SC2020
+                    tr ',{}' '\n\n\n' < "$tmpd/igc.json" | awk -F'"' '$2 == "name" { n = $4 } $2 == "digest" && $4 ~ /^sha256:/ { print substr($4, 8), n }' > "$tmpd/igc.sum"
+                fi
+                mkdir -p "$tmpd/debs"; got=0; bad=0
+                for u in $cr_urls $igc_urls; do
+                    case "$u" in *.sum) d="$tmpd" ;; *) d="$tmpd/debs" ;; esac
+                    if fetch "$u" "$d/$(basename "$u")"; then got=$((got+1)); else warn "download failed: $u"; bad=1; fi
+                done
+                for f in "$tmpd"/debs/*.deb; do
+                    [ -f "$f" ] || { bad=1; break; }
+                    n="$(basename "$f")"
+                    want="$(cat "$tmpd"/*.sum 2>/dev/null | awk -v n="$n" '$NF == n || $NF == "*" n { print $1; exit }')"
+                    have="$(sha256sum "$f" | cut -d' ' -f1)"
+                    if [ -z "$want" ] || [ "$want" != "$have" ]; then warn "checksum missing or wrong for $n"; bad=1; fi
+                done
+                if [ -z "$igc_urls" ]; then warn "release notes name no intel-graphics-compiler packages"; bad=1; fi
+                if [ $bad = 0 ] && [ $got -gt 0 ]; then
+                    # shellcheck disable=SC2046
+                    if $SUDO dpkg -i $(find "$tmpd/debs" -name '*.deb') >/dev/null 2>&1 || $APT install -f -y >/dev/null 2>&1; then
+                        log "installed from GitHub: $(for d in "$tmpd"/debs/*.deb; do basename "$d" | cut -d_ -f1-2; done | tr '\n' ' ')"
+                    else
+                        warn "dpkg reported errors installing the GitHub GPU runtime packages"
+                    fi
+                else
+                    warn "not installing the GitHub GPU runtime (download or checksum problem). Manual steps: https://github.com/intel/compute-runtime/releases"
+                fi
+            else
+                warn "could not reach the GitHub releases API. Manual steps: https://github.com/intel/compute-runtime/releases"
+            fi
+            rm -rf "$tmpd"
+        fi
+        if gpu_runtime_ok; then log "GPU compute runtime working: $(clinfo -l 2>/dev/null | grep Device | sed 's/.*Device #[0-9]*: *//' | tr '\n' ' ')"
+        else warn "GPU compute runtime still lists no Intel GPU in clinfo; see README for manual steps"; fi
     fi
 
     # -------------------------------------------------------------- NPU
@@ -237,6 +292,7 @@ if [ "$RUN_USER" != "root" ]; then
 fi
 
 # ------------------------------------------------------------------ summary
-log "summary: GPU runtime $(gpu_runtime_ok && echo present || echo missing); NPU driver $(npu_runtime_ok && echo present || echo missing); /dev/accel $(npu_kernel_ok && echo present || echo absent)"
+if gpu_runtime_ok; then gpu_state=working; elif gpu_runtime_files; then gpu_state="installed but lists no GPU"; else gpu_state=missing; fi
+log "summary: GPU runtime $gpu_state; NPU driver $(npu_runtime_ok && echo present || echo missing); /dev/accel $(npu_kernel_ok && echo present || echo absent)"
 log "restart viam-server (or reboot if a kernel module was just loaded), then confirm with DoCommand list_devices on viam:openvino:diagnostics"
 exit 0
