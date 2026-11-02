@@ -274,6 +274,13 @@ On either release, the packaged `intel-opencl-icd` from Ubuntu's own repositorie
 If viam-server runs as a non-root user, add it to the `render` and `video` groups:
 `sudo usermod -aG render,video <user>`. Verify with `clinfo -l`, which should list an Intel platform and device.
 
+The apt packages can lag new GPUs: Intel's noble repository still ships the 24.39 runtime, which loads but lists no
+device on Panther Lake (Arc B-series iGPU). If `clinfo -l` shows no Intel GPU, install the `.deb` packages of the latest
+[intel/compute-runtime release](https://github.com/intel/compute-runtime/releases) plus the two
+`intel-graphics-compiler` packages its release notes link, following the steps in those notes
+(`sha256sum`, then `sudo dpkg -i *.deb`). The module's `first_run.sh` does this automatically when the apt
+runtime does not list the GPU.
+
 ### Intel NPU (Core Ultra)
 
 Needs Linux kernel 6.8 or newer (the `intel_vpu` module, in stock Ubuntu 24.04 and the 22.04 HWE kernel) and the
