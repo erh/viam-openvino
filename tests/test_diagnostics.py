@@ -8,11 +8,11 @@ from models.openvino_mlmodel import OpenVINOMLModel
 
 
 def ml_config(name, **attrs):
-    return ComponentConfig(name=name, api="rdk:service:mlmodel", model="erh:openvino:mlmodel", attributes=dict_to_struct(attrs))
+    return ComponentConfig(name=name, api="rdk:service:mlmodel", model="viam:openvino:mlmodel", attributes=dict_to_struct(attrs))
 
 
 def diag_config(name="diag", **attrs):
-    return ComponentConfig(name=name, api="rdk:service:generic", model="erh:openvino:diagnostics", attributes=dict_to_struct(attrs))
+    return ComponentConfig(name=name, api="rdk:service:generic", model="viam:openvino:diagnostics", attributes=dict_to_struct(attrs))
 
 
 async def test_registry_lifecycle(tiny_ir, tmp_path):
@@ -36,7 +36,7 @@ async def test_diagnostics_routes_commands(tiny_ir, tmp_path):
         assert bench["iterations"] == 2
         assert (await d.do_command({"command": "stats"}))["total_calls"] == 2
         # Per-command override of the target mlmodel.
-        with pytest.raises(ValueError, match="not a erh:openvino:mlmodel running in this module"):
+        with pytest.raises(ValueError, match="not a viam:openvino:mlmodel running in this module"):
             await d.do_command({"command": "stats", "mlmodel_name": "elsewhere"})
         with pytest.raises(ValueError, match="unknown command"):
             await d.do_command({"command": "nope"})

@@ -1,9 +1,9 @@
-"""In-process registry of live ``erh:openvino:mlmodel`` engines.
+"""In-process registry of live ``viam:openvino:mlmodel`` engines.
 
 The mlmodel gRPC API has no DoCommand RPC (only Infer, Metadata and GetStatus), so clients cannot
 call DoCommand on an mlmodel service. Diagnostics (list_devices, get_compiled_properties, benchmark,
-stats) are therefore exposed through ``erh:openvino:diagnostics`` (a generic service) and through
-``erh:openvino:yolo``'s DoCommand, both of which reach the engine through this registry when the
+stats) are therefore exposed through ``viam:openvino:diagnostics`` (a generic service) and through
+``viam:openvino:yolo``'s DoCommand, both of which reach the engine through this registry when the
 mlmodel runs in the same module process.
 """
 
@@ -61,7 +61,7 @@ async def run_diagnostic(command: Mapping[str, ValueTypes], mlmodel_name: Option
     target = get(mlmodel_name)
     if target is None:
         raise ValueError(
-            f"mlmodel '{mlmodel_name}' is not a erh:openvino:mlmodel running in this module process "
+            f"mlmodel '{mlmodel_name}' is not a viam:openvino:mlmodel running in this module process "
             f"(known: {names() or 'none'}); diagnostics only work for that model"
         )
     return await target.do_command(command)

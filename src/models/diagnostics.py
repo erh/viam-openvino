@@ -1,4 +1,4 @@
-"""``erh:openvino:diagnostics`` - a generic service exposing device discovery and benchmarking.
+"""``viam:openvino:diagnostics`` - a generic service exposing device discovery and benchmarking.
 
 The mlmodel API has no DoCommand RPC, so this small service is the client-reachable entry point for
 ``list_devices``, ``get_compiled_properties``, ``benchmark`` and ``stats`` (see registry.py).
@@ -21,7 +21,7 @@ from . import registry
 
 
 class OpenVINODiagnostics(Generic, EasyResource):
-    MODEL: ClassVar[Model] = "erh:openvino:diagnostics"
+    MODEL: ClassVar[Model] = "viam:openvino:diagnostics"
 
     def __init__(self, name: str) -> None:
         super().__init__(name)

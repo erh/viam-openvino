@@ -17,7 +17,7 @@ from models.yolo_vision import YoloConfig, YoloVision
 
 
 def make_config(name="yolo", **attrs):
-    return ComponentConfig(name=name, api="rdk:service:vision", model="erh:openvino:yolo", attributes=dict_to_struct(attrs))
+    return ComponentConfig(name=name, api="rdk:service:vision", model="viam:openvino:yolo", attributes=dict_to_struct(attrs))
 
 
 def make_image(w: int, h: int, mime=CameraMimeType.JPEG) -> ViamImage:
@@ -185,9 +185,9 @@ async def test_missing_dependency():
 
 
 async def test_end_to_end_with_openvino_mlmodel(fake_yolo_ir, labels_file, tmp_path):
-    """erh:openvino:mlmodel + erh:openvino:yolo on a synthetic YOLOv8-shaped OpenVINO model."""
+    """viam:openvino:mlmodel + viam:openvino:yolo on a synthetic YOLOv8-shaped OpenVINO model."""
     ml = OpenVINOMLModel.new(
-        ComponentConfig(name="m", api="rdk:service:mlmodel", model="erh:openvino:mlmodel",
+        ComponentConfig(name="m", api="rdk:service:mlmodel", model="viam:openvino:mlmodel",
                         attributes=dict_to_struct({"model_path": fake_yolo_ir, "label_path": labels_file, "device": "CPU", "cache_dir": str(tmp_path)})),
         {},
     )
@@ -210,7 +210,7 @@ async def test_end_to_end_with_openvino_mlmodel(fake_yolo_ir, labels_file, tmp_p
 
 async def test_yolo_forwards_diagnostics(fake_yolo_ir, labels_file, tmp_path):
     ml = OpenVINOMLModel.new(
-        ComponentConfig(name="m2", api="rdk:service:mlmodel", model="erh:openvino:mlmodel",
+        ComponentConfig(name="m2", api="rdk:service:mlmodel", model="viam:openvino:mlmodel",
                         attributes=dict_to_struct({"model_path": fake_yolo_ir, "device": "CPU", "cache_dir": str(tmp_path)})),
         {},
     )

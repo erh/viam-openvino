@@ -1,7 +1,7 @@
 {
   "module_name": "viam-openvino",
   "visibility": "public",
-  "namespace": "erh",
+  "namespace": "viam",
   "language": "python",
   "resource_type": "service",
   "resource_subtype": "mlmodel",

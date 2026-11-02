@@ -1,4 +1,4 @@
-"""``erh:openvino:mlmodel`` - an mlmodel service backed by the OpenVINO runtime."""
+"""``viam:openvino:mlmodel`` - an mlmodel service backed by the OpenVINO runtime."""
 
 from __future__ import annotations
 
@@ -25,7 +25,7 @@ LOGGER = getLogger(__name__)
 
 
 class OpenVINOMLModel(MLModel, EasyResource):
-    MODEL: ClassVar[Model] = "erh:openvino:mlmodel"
+    MODEL: ClassVar[Model] = "viam:openvino:mlmodel"
 
     def __init__(self, name: str) -> None:
         super().__init__(name)
@@ -110,7 +110,7 @@ class OpenVINOMLModel(MLModel, EasyResource):
 
     # ----------------------------------------------------------- do_command
     # Note: the mlmodel gRPC API has no DoCommand RPC, so remote clients reach these commands through
-    # erh:openvino:diagnostics or erh:openvino:yolo (see registry.py). This implementation is what they call.
+    # viam:openvino:diagnostics or viam:openvino:yolo (see registry.py). This implementation is what they call.
     async def do_command(
         self, command: Mapping[str, ValueTypes], *, timeout: Optional[float] = None, **kwargs
     ) -> Mapping[str, ValueTypes]:

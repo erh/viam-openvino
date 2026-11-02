@@ -56,7 +56,7 @@ def labels(tmp_path):
 
 async def test_yolov8n_end_to_end(labels, tmp_path):
     ml = OpenVINOMLModel.new(
-        ComponentConfig(name="m", api="rdk:service:mlmodel", model="erh:openvino:mlmodel",
+        ComponentConfig(name="m", api="rdk:service:mlmodel", model="viam:openvino:mlmodel",
                         attributes=dict_to_struct({"model_path": MODEL, "label_path": labels, "device": "CPU",
                                                    "cache_dir": str(tmp_path / "cache")})),
         {},
@@ -71,7 +71,7 @@ async def test_yolov8n_end_to_end(labels, tmp_path):
         img.save(buf, format="JPEG")
         cam = OneShotCamera("cam", buf.getvalue())
         vision = YoloVision.new(
-            ComponentConfig(name="v", api="rdk:service:vision", model="erh:openvino:yolo",
+            ComponentConfig(name="v", api="rdk:service:vision", model="viam:openvino:yolo",
                             attributes=dict_to_struct({"mlmodel_name": "m", "camera_name": "cam", "confidence_threshold": 0.05})),
             {MLModel.get_resource_name("m"): ml, Camera.get_resource_name("cam"): cam},
         )

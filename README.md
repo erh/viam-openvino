@@ -1,6 +1,6 @@
 # viam-openvino: OpenVINO module for Viam
 
-Module ID: `erh:viam-openvino` (source: <https://github.com/erh/viam-openvino>).
+Module ID: `viam:viam-openvino` (source: <https://github.com/viam-modules/viam-openvino>).
 
 Run ML models on Intel hardware (CPU, integrated GPU, Arc GPU, and the NPU in Core Ultra chips) from a
 Viam machine, using the [OpenVINO](https://docs.openvino.ai/) runtime.
@@ -9,9 +9,9 @@ This module provides two models:
 
 | Model | API | Purpose |
 |---|---|---|
-| [`erh:openvino:mlmodel`](#viamopenvinomlmodel) | `rdk:service:mlmodel` | Runs ONNX, OpenVINO IR, TFLite, TensorFlow and PaddlePaddle models. Works with the stock `vision:mlmodel` service and anything else that speaks the `mlmodel` API. |
-| [`erh:openvino:yolo`](#viamopenvinoyolo) | `rdk:service:vision` | Decodes YOLO v5 / v8 / v11 detection outputs (letterbox, decode, NMS) on top of any `mlmodel` service, not only this one. |
-| [`erh:openvino:diagnostics`](#viamopenvinodiagnostics) | `rdk:service:generic` | `list_devices`, `get_compiled_properties`, `benchmark` and `stats` via `DoCommand`. |
+| [`viam:openvino:mlmodel`](#viamopenvinomlmodel) | `rdk:service:mlmodel` | Runs ONNX, OpenVINO IR, TFLite, TensorFlow and PaddlePaddle models. Works with the stock `vision:mlmodel` service and anything else that speaks the `mlmodel` API. |
+| [`viam:openvino:yolo`](#viamopenvinoyolo) | `rdk:service:vision` | Decodes YOLO v5 / v8 / v11 detection outputs (letterbox, decode, NMS) on top of any `mlmodel` service, not only this one. |
+| [`viam:openvino:diagnostics`](#viamopenvinodiagnostics) | `rdk:service:generic` | `list_devices`, `get_compiled_properties`, `benchmark` and `stats` via `DoCommand`. |
 
 Supported platforms: `linux/amd64` and `windows/amd64` (CPU, Intel iGPU, Arc, NPU). This is an Intel-only module;
 there is no arm64 build. macOS is supported for development from source only.
@@ -28,7 +28,7 @@ there is no arm64 build. macOS is supported for development from source only.
     {
       "name": "ov",
       "api": "rdk:service:mlmodel",
-      "model": "erh:openvino:mlmodel",
+      "model": "viam:openvino:mlmodel",
       "attributes": {
         "model_path": "${packages.ml_model.yolov8n}/yolov8n.onnx",
         "label_path": "${packages.ml_model.yolov8n}/labels.txt"
@@ -37,7 +37,7 @@ there is no arm64 build. macOS is supported for development from source only.
     {
       "name": "detector",
       "api": "rdk:service:vision",
-      "model": "erh:openvino:yolo",
+      "model": "viam:openvino:yolo",
       "attributes": {
         "mlmodel_name": "ov",
         "camera_name": "cam"
@@ -50,21 +50,21 @@ there is no arm64 build. macOS is supported for development from source only.
 That is the whole configuration. `device` defaults to `AUTO`, which picks the best available accelerator (GPU or NPU
 when the drivers are installed, otherwise CPU). Call `GetDetectionsFromCamera` on `detector` to get boxes.
 
-To confirm which devices OpenVINO can see on the machine, add a `erh:openvino:diagnostics` service (or use the
+To confirm which devices OpenVINO can see on the machine, add a `viam:openvino:diagnostics` service (or use the
 `detector` above) and run `DoCommand`:
 
 ```json
 {"command": "list_devices"}
 ```
 
-## `erh:openvino:mlmodel`
+## `viam:openvino:mlmodel`
 
 ### Attributes
 
 | Attribute | Type | Default | Required | Description |
 |---|---|---|---|---|
 | `model_path` | string | | yes | Path to the model. Supports package variables such as `${packages.ml_model.foo}/model.onnx`. Formats are detected by extension: OpenVINO IR (`.xml` with a sibling `.bin`), ONNX (`.onnx`), TFLite (`.tflite`), TensorFlow (`.pb` or a SavedModel directory), PaddlePaddle (`.pdmodel`). |
-| `label_path` | string | | no | Newline-delimited labels file. Exposed through metadata so `vision:mlmodel` and `erh:openvino:yolo` pick it up. |
+| `label_path` | string | | no | Newline-delimited labels file. Exposed through metadata so `vision:mlmodel` and `viam:openvino:yolo` pick it up. |
 | `device` | string | `"AUTO"` | no | OpenVINO device: `CPU`, `GPU`, `GPU.0`, `GPU.1`, `NPU`, `AUTO`, `AUTO:GPU,CPU`, `HETERO:GPU,CPU`, `MULTI:GPU,CPU`. |
 | `performance_hint` | string | `"LATENCY"` | no | `LATENCY`, `THROUGHPUT` or `CUMULATIVE_THROUGHPUT`. |
 | `num_requests` | int | optimal for device | no | Size of the infer-request pool. Concurrent `Infer` calls run in parallel up to this number. |
@@ -127,7 +127,7 @@ compiled into the graph by OpenVINO's `PrePostProcessor` and run on the target d
 Metadata always describes what the caller sends. With the block above, `Metadata` reports the input as
 `uint8 [1, -1, -1, 3]`, even though the model itself consumes `float32 [1, 3, 640, 640]`.
 
-Letterboxing is not part of preprocessing. `erh:openvino:yolo` does it, because it needs the padding offsets to map
+Letterboxing is not part of preprocessing. `viam:openvino:yolo` does it, because it needs the padding offsets to map
 boxes back to the original image.
 
 ### Metadata
@@ -152,8 +152,8 @@ finds the labels without extra configuration.
 ### DoCommand
 
 The `mlmodel` gRPC API only has `Infer`, `Metadata` and `GetStatus`, so clients cannot call `DoCommand` on an mlmodel
-service directly. The commands below are therefore served by [`erh:openvino:diagnostics`](#viamopenvinodiagnostics)
-and by the `DoCommand` of [`erh:openvino:yolo`](#viamopenvinoyolo), both of which forward to the mlmodel running in
+service directly. The commands below are therefore served by [`viam:openvino:diagnostics`](#viamopenvinodiagnostics)
+and by the `DoCommand` of [`viam:openvino:yolo`](#viamopenvinoyolo), both of which forward to the mlmodel running in
 the same module process. All commands take a JSON object with a `command` key.
 
 | Command | Arguments | Returns |
@@ -174,10 +174,10 @@ selected, whether the compile was served from the cache, and the compile time.
 - A compile failure fails the resource with the OpenVINO error message.
 - A corrupt cache entry is deleted and the model is recompiled, with a warning.
 
-## `erh:openvino:yolo`
+## `viam:openvino:yolo`
 
 A vision service that turns raw YOLO outputs into Viam detections. It depends on an `mlmodel` service and works with
-any implementation of that API, not only `erh:openvino:mlmodel`.
+any implementation of that API, not only `viam:openvino:mlmodel`.
 
 ### Attributes
 
@@ -209,9 +209,9 @@ any implementation of that API, not only `erh:openvino:mlmodel`.
 
 `DoCommand {"command": "model_info"}` reports the input name and size, output names and shapes, label count, and the
 YOLO version in use. The mlmodel diagnostics commands (`list_devices`, `get_compiled_properties`, `benchmark`, `stats`)
-are also accepted and forwarded to the configured `mlmodel_name` when it is a `erh:openvino:mlmodel` in this module.
+are also accepted and forwarded to the configured `mlmodel_name` when it is a `viam:openvino:mlmodel` in this module.
 
-## `erh:openvino:diagnostics`
+## `viam:openvino:diagnostics`
 
 A generic service whose only job is `DoCommand`. Configure it next to an mlmodel:
 
@@ -219,14 +219,14 @@ A generic service whose only job is `DoCommand`. Configure it next to an mlmodel
 {
   "name": "ov-diag",
   "api": "rdk:service:generic",
-  "model": "erh:openvino:diagnostics",
+  "model": "viam:openvino:diagnostics",
   "attributes": {"mlmodel_name": "ov"}
 }
 ```
 
 | Attribute | Type | Required | Description |
 |---|---|---|---|
-| `mlmodel_name` | string | no | The `erh:openvino:mlmodel` to inspect. `list_devices` works without it. A `mlmodel_name` key in the command overrides it per call. |
+| `mlmodel_name` | string | no | The `viam:openvino:mlmodel` to inspect. `list_devices` works without it. A `mlmodel_name` key in the command overrides it per call. |
 
 It accepts every command in the [DoCommand table](#docommand). Example from the Python SDK:
 
@@ -240,7 +240,7 @@ print(await diag.do_command({"command": "benchmark", "iterations": 200}))
 
 The module bundles the OpenVINO runtime and its device plugins, but not kernel drivers or the user-space compute
 runtime. Install those on the host, restart viam-server, and confirm with `DoCommand {"command": "list_devices"}` on a
-`erh:openvino:diagnostics` service. CPU inference needs nothing extra.
+`viam:openvino:diagnostics` service. CPU inference needs nothing extra.
 
 ### Intel GPU (integrated Iris Xe / UHD, Arc)
 
@@ -356,7 +356,7 @@ TBB libraries cannot be relinked by PyInstaller), so develop and run from the ve
 
 The test suite covers config validation, caller-facing metadata under preprocessing, YOLO v5/v8 decoding and NMS with
 fixture tensors, letterbox inversion for non-square images, IR-versus-ONNX output equality, concurrent inference,
-cache hits on reload, and an end-to-end run of `erh:openvino:mlmodel` plus `erh:openvino:yolo` on a synthetic
+cache hits on reload, and an end-to-end run of `viam:openvino:mlmodel` plus `viam:openvino:yolo` on a synthetic
 YOLOv8-shaped model with known boxes. A real YOLOv8n test runs when `YOLOV8N_ONNX` points at an ONNX export
 (`make fetch-yolov8n` downloads one from `YOLOV8N_ONNX_URL`).
 

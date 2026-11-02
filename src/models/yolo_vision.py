@@ -1,4 +1,4 @@
-"""``erh:openvino:yolo`` - a vision service that decodes YOLO v5/v8/v11 outputs
+"""``viam:openvino:yolo`` - a vision service that decodes YOLO v5/v8/v11 outputs
 from any ``mlmodel`` service and returns Viam detections."""
 
 from __future__ import annotations
@@ -99,7 +99,7 @@ def _float_attr(attrs: Mapping[str, Any], key: str, default: float, lo: float, h
 
 
 class YoloVision(Vision, EasyResource):
-    MODEL: ClassVar[Model] = "erh:openvino:yolo"
+    MODEL: ClassVar[Model] = "viam:openvino:yolo"
 
     def __init__(self, name: str) -> None:
         super().__init__(name)
@@ -273,13 +273,13 @@ class YoloVision(Vision, EasyResource):
         return result
 
     async def get_classifications(self, image: ViamImage, count: int, *, extra: Optional[Mapping[str, ValueTypes]] = None, timeout: Optional[float] = None) -> List[Classification]:
-        raise NotSupportedError(f"vision '{self.name}' (erh:openvino:yolo) does not support classifications")
+        raise NotSupportedError(f"vision '{self.name}' (viam:openvino:yolo) does not support classifications")
 
     async def get_classifications_from_camera(self, camera_name: str, count: int, *, extra: Optional[Mapping[str, ValueTypes]] = None, timeout: Optional[float] = None) -> List[Classification]:
-        raise NotSupportedError(f"vision '{self.name}' (erh:openvino:yolo) does not support classifications")
+        raise NotSupportedError(f"vision '{self.name}' (viam:openvino:yolo) does not support classifications")
 
     async def get_object_point_clouds(self, camera_name: str, *, extra: Optional[Mapping[str, ValueTypes]] = None, timeout: Optional[float] = None) -> List[PointCloudObject]:
-        raise NotSupportedError(f"vision '{self.name}' (erh:openvino:yolo) does not support object point clouds")
+        raise NotSupportedError(f"vision '{self.name}' (viam:openvino:yolo) does not support object point clouds")
 
     async def get_properties(self, *, extra: Optional[Mapping[str, ValueTypes]] = None, timeout: Optional[float] = None) -> GetPropertiesResponse:
         return GetPropertiesResponse(
@@ -298,7 +298,7 @@ class YoloVision(Vision, EasyResource):
             info["version"] = info["version"] or self.cfg.yolo_version  # type: ignore[union-attr]
             return info
         if cmd in registry.DIAGNOSTIC_COMMANDS:
-            # The mlmodel API has no DoCommand RPC; forward diagnostics to an in-process erh:openvino:mlmodel.
+            # The mlmodel API has no DoCommand RPC; forward diagnostics to an in-process viam:openvino:mlmodel.
             return await registry.run_diagnostic(command, self.cfg.mlmodel_name if self.cfg else None)
         raise ValueError(f"unknown command '{cmd}'; expected model_info or one of {', '.join(registry.DIAGNOSTIC_COMMANDS)}")
 

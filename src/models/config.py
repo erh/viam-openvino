@@ -1,4 +1,4 @@
-"""Configuration parsing and validation for ``erh:openvino:mlmodel``.
+"""Configuration parsing and validation for ``viam:openvino:mlmodel``.
 
 All validation errors are raised as ``ValueError`` with a message that names
 the offending attribute, so that ``validate_config`` fails at config time
