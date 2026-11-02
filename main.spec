@@ -1,5 +1,5 @@
 # -*- mode: python ; coding: utf-8 -*-
-# PyInstaller spec for the erh:openvino module binary. Invoked by build.sh.
+# PyInstaller spec for the viam:openvino module binary. Invoked by build.sh.
 import os
 
 from PyInstaller.utils.hooks import collect_all

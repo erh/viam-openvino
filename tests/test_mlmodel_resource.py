@@ -7,7 +7,7 @@ from models.openvino_mlmodel import OpenVINOMLModel
 
 
 def make_config(name="ov", **attrs):
-    return ComponentConfig(name=name, api="rdk:service:mlmodel", model="erh:openvino:mlmodel", attributes=dict_to_struct(attrs))
+    return ComponentConfig(name=name, api="rdk:service:mlmodel", model="viam:openvino:mlmodel", attributes=dict_to_struct(attrs))
 
 
 @pytest.fixture

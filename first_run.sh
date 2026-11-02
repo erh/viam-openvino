@@ -238,5 +238,5 @@ fi
 
 # ------------------------------------------------------------------ summary
 log "summary: GPU runtime $(gpu_runtime_ok && echo present || echo missing); NPU driver $(npu_runtime_ok && echo present || echo missing); /dev/accel $(npu_kernel_ok && echo present || echo absent)"
-log "restart viam-server (or reboot if a kernel module was just loaded), then confirm with DoCommand list_devices on erh:openvino:diagnostics"
+log "restart viam-server (or reboot if a kernel module was just loaded), then confirm with DoCommand list_devices on viam:openvino:diagnostics"
 exit 0
