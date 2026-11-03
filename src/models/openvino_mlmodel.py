@@ -80,9 +80,11 @@ class OpenVINOMLModel(MLModel, EasyResource):
         extra: Optional[Mapping[str, ValueTypes]] = None,
         timeout: Optional[float] = None,
     ) -> Dict[str, Any]:
-        engine = self._require_engine()
+        self._require_engine()
         loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(self._executor, engine.infer, input_tensors)
+        # Resolve the engine when the job runs, not when it is queued: calls still waiting when a reconfigure swaps
+        # engines then run on the new one instead of failing with "engine is closed".
+        return await loop.run_in_executor(self._executor, lambda: self._require_engine().infer(input_tensors))
 
     async def metadata(self, *, extra: Optional[Mapping[str, ValueTypes]] = None, timeout: Optional[float] = None) -> Metadata:
         self._require_engine()

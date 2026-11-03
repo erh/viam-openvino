@@ -195,15 +195,29 @@ class YoloVision(Vision, EasyResource):
         return True
 
     # ------------------------------------------------------------ detection
-    async def _infer(self, image: ViamImage) -> Tuple[Mapping[str, Any], LetterboxInfo, Dict[str, Any], np.ndarray]:
-        """Letterbox ``image`` and run the mlmodel. Returns (outputs, letterbox info, model info, RGB array)."""
-        assert self.cfg is not None and self.mlmodel is not None
+    async def _detect(self, image: ViamImage) -> List[Detection]:
+        """Image decoding, preprocessing and postprocessing are CPU-bound, so they run in worker threads; on the
+        event loop they would stall every other request the module is serving."""
         info = await self._get_model_info()
+        feeds, ctx = await asyncio.to_thread(self._prepare, image, info)
+        outputs = await self._run_model(feeds)
+        return await asyncio.to_thread(self._postprocess, outputs, ctx, info)
+
+    async def _run_model(self, feeds: Dict[str, np.ndarray]) -> Mapping[str, Any]:
+        """Call the mlmodel, directly when it is a viam:openvino:mlmodel in this process. The dependency is a gRPC
+        client routed through viam-server, so the direct call skips serializing the tensors twice per frame."""
+        assert self.cfg is not None and self.mlmodel is not None
+        local = registry.get(self.cfg.mlmodel_name)
+        if local is not None:
+            return await local.infer(feeds)
+        return await self.mlmodel.infer(feeds)
+
+    def _prepare(self, image: ViamImage, info: Mapping[str, Any]) -> Tuple[Dict[str, np.ndarray], Any]:
+        """Letterbox ``image``. Returns (mlmodel input tensors, letterbox info for _postprocess)."""
+        assert self.cfg is not None
         rgb = np.asarray(viam_to_pil_image(image).convert("RGB"))
         canvas, lb = letterbox(rgb, info["input_size"])
-        tensor = to_model_input(canvas, self.cfg.input_format)
-        outputs = await self.mlmodel.infer({info["input_name"]: tensor})
-        return outputs, lb, info, rgb
+        return {info["input_name"]: to_model_input(canvas, self.cfg.input_format)}, lb
 
     def _to_detection(self, box: Sequence[float], score: float, name: str, lb: LetterboxInfo) -> Detection:
         x1, y1, x2, y2 = (float(v) for v in box)
@@ -218,10 +232,9 @@ class YoloVision(Vision, EasyResource):
         labels = info["labels"]
         return labels[cid] if 0 <= cid < len(labels) else str(int(cid))
 
-    async def _detect(self, image: ViamImage) -> List[Detection]:
+    def _postprocess(self, outputs: Mapping[str, Any], lb: LetterboxInfo, info: Dict[str, Any]) -> List[Detection]:
         assert self.cfg is not None
         cfg = self.cfg
-        outputs, lb, info, _ = await self._infer(image)
         raw = _pick_detection_output(outputs, info["output_names"])
         version = info["version"]
         if version is None:
