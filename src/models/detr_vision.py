@@ -4,7 +4,7 @@ preprocessing and decoding differ."""
 
 from __future__ import annotations
 
-from typing import Any, ClassVar, List, Mapping, Optional
+from typing import Any, ClassVar, Dict, List, Mapping, Optional, Tuple
 
 import numpy as np
 from viam.media.utils.pil import viam_to_pil_image
@@ -40,15 +40,18 @@ class RfDetrVision(YoloVision):
     MODEL: ClassVar[Model] = "viam:openvino:rf-detr"
     CONFIG_CLASS: ClassVar[type] = RfDetrConfig
 
-    async def _detect(self, image: ViamImage) -> List[Detection]:
-        assert self.cfg is not None and self.mlmodel is not None
-        cfg = self.cfg
-        info = await self._get_model_info()
+    def _prepare(self, image: ViamImage, info: Mapping[str, Any]) -> Tuple[Dict[str, np.ndarray], Tuple[int, int]]:
+        """Stretch and normalize ``image``. Returns (mlmodel input tensors, original (H, W) for _postprocess)."""
+        assert self.cfg is not None
         rgb = np.asarray(viam_to_pil_image(image).convert("RGB"))
-        tensor = np.ascontiguousarray(rgb[np.newaxis]) if cfg.raw_pixels else preprocess(rgb, info["input_size"])
-        outputs = await self.mlmodel.infer({info["input_name"]: tensor})
+        tensor = np.ascontiguousarray(rgb[np.newaxis]) if self.cfg.raw_pixels else preprocess(rgb, info["input_size"])
+        return {info["input_name"]: tensor}, rgb.shape[:2]
+
+    def _postprocess(self, outputs: Mapping[str, Any], orig_hw: Tuple[int, int], info: Dict[str, Any]) -> List[Detection]:
+        assert self.cfg is not None
+        cfg = self.cfg
         boxes, logits = pick_outputs(outputs, info["output_names"])
-        h, w = rgb.shape[:2]
+        h, w = orig_hw
         # With a class filter, cap after filtering so other classes cannot crowd out the wanted ones.
         limit = cfg.max_detections if cfg.class_filter is None else logits.size
         xyxy, scores, class_ids = decode(boxes, logits, cfg.confidence_threshold, limit, (h, w))

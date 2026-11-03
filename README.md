@@ -58,6 +58,50 @@ To confirm which devices OpenVINO can see on the machine, add a `viam:openvino:d
 {"command": "list_devices"}
 ```
 
+**Sharing one model between several cameras or services.** With the default `LATENCY` hint OpenVINO usually
+creates a single infer request, so concurrent `Infer` calls queue behind each other. When more than one camera or
+vision service uses the same mlmodel, set `"num_requests": 2` to `4` (or `"performance_hint": "THROUGHPUT"`) so
+they run in parallel. `DoCommand {"command": "stats"}` on the vision service shows whether latency improves.
+
+## Known-good configs
+
+Starting points for the `viam:openvino:mlmodel` attributes, per kind of machine. The vision service config from the
+quick start works unchanged with all of them unless noted.
+
+**CPU only** (no Intel GPU or NPU, or drivers not installed):
+
+```json
+{"model_path": "...", "label_path": "...", "device": "CPU", "num_requests": 2}
+```
+
+**Intel iGPU or Arc GPU:** move resizing and normalization onto the GPU, so raw `uint8` pixels go to the model
+(4x less data per frame than `float32`). On the `viam:openvino:yolo` service set `"input_format": "NHWC_u8_rgb"` and
+`"input_size": [640, 640]` (the model's size; the mlmodel now reports dynamic spatial dimensions).
+
+```json
+{
+  "model_path": "...", "label_path": "...", "device": "GPU", "num_requests": 2,
+  "preprocess": {
+    "tensor_element_type": "u8", "tensor_layout": "NHWC", "tensor_color_format": "RGB",
+    "model_layout": "NCHW", "model_color_format": "RGB", "resize": "linear",
+    "mean": [0, 0, 0], "scale": [255, 255, 255]
+  }
+}
+```
+
+The `resize` step stretches; letterboxing is still done by `viam:openvino:yolo`, so its output already has the model's
+size and the resize is a no-op. For RF-DETR use the `preprocess` block in the [RF-DETR section](#viamopenvinorf-detr).
+
+**Core Ultra with NPU:** the NPU needs static input shapes, so no `resize` in `preprocess`; keep the vision service's
+default `input_format`. Use `input_shape` if the model was exported with dynamic dimensions.
+
+```json
+{"model_path": "...", "label_path": "...", "device": "NPU", "input_shape": {"images": [1, 3, 640, 640]}}
+```
+
+`"device": "AUTO"` (the default) picks NPU, then GPU, then CPU, but a fixed device makes results reproducible across
+machines and fails loudly when the driver is missing. Confirm what was selected with `get_compiled_properties`.
+
 ## `viam:openvino:mlmodel`
 
 ### Attributes
@@ -205,6 +249,10 @@ any implementation of that API, not only `viam:openvino:mlmodel`.
    with an objectness term that multiplies the class score.
 5. Filter by confidence, run class-aware NMS, cap at `max_detections`.
 6. Map boxes back to original pixel coordinates and clamp to the image.
+
+Steps 1–2 and 4–6 run in worker threads, so one slow frame does not stall other requests to the module. When
+`mlmodel_name` is a `viam:openvino:mlmodel` in the same module, step 3 calls it directly instead of through
+viam-server, which saves serializing the tensors twice per frame. Any other `mlmodel` is called over gRPC as usual.
 
 `GetDetections`, `GetDetectionsFromCamera` and `CaptureAllFromCamera` (image plus detections) are implemented.
 `GetProperties` reports detections only. Classification and point cloud calls return an unimplemented error.
@@ -394,6 +442,8 @@ On Core Ultra machines the same driver package installs the NPU driver; Device M
 | Log: `'NPU' is not in available devices` | NPU driver missing, kernel too old, or `/dev/accel/accel0` not accessible (Linux); driver not installed (Windows) | Install the NPU driver. On Linux check `dmesg \| grep -i vpu`. |
 | `AUTO` runs on CPU although a GPU exists | Same as above; `AUTO` warns and continues | Check the startup warning and `list_devices`. |
 | First start on GPU/NPU is slow | Model compilation | Expected once. Keep `cache_dir` enabled; the next start is a cache hit. |
+| First detections are slow under `AUTO`, then speed up | `AUTO` serves on the CPU while the accelerator compiles (`execution_devices` reads `["(CPU)"]`) | Expected; the log says when inference moves to the accelerator. Set `"extra_config": {"ENABLE_STARTUP_FALLBACK": "NO"}` to wait instead. |
+| Detections get slower as more cameras are added | One infer request, so calls queue | Set `num_requests` to 2–4, see [sharing one model](#quick-start-yolov8-detections-from-a-camera). |
 | `input tensor names do not match the model` | Caller uses a different input name on a multi-input model | Use the names from `Metadata`. |
 
 ## Benchmarks
