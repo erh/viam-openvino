@@ -1,4 +1,4 @@
-viam-sdk[mlmodel]==0.83.0
+viam-sdk[mlmodel]==0.85.1
 openvino==2026.4.0
 numpy>=1.26,<2.4
 pillow>=10.0
