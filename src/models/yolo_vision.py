@@ -16,7 +16,7 @@ from viam.media.utils.pil import viam_to_pil_image
 from viam.media.video import CameraMimeType, ViamImage
 from viam.proto.app.robot import ComponentConfig
 from viam.proto.common import PointCloudObject, ResourceName
-from viam.proto.service.vision import Classification, Detection, GetPropertiesResponse
+from viam.proto.service.vision import Classification, Detection, Detection3D, GetPropertiesResponse
 from viam.resource.base import ResourceBase
 from viam.resource.easy_resource import EasyResource
 from viam.resource.types import Model
@@ -312,6 +312,9 @@ class YoloVision(Vision, EasyResource):
 
     async def get_object_point_clouds(self, camera_name: str, *, extra: Optional[Mapping[str, ValueTypes]] = None, timeout: Optional[float] = None) -> List[PointCloudObject]:
         raise NotSupportedError(f"vision '{self.name}' ({self.MODEL}) does not support object point clouds")
+
+    async def get_detections_3d(self, camera_name: str, *, extra: Optional[Mapping[str, ValueTypes]] = None, timeout: Optional[float] = None) -> List[Detection3D]:
+        raise NotSupportedError(f"vision '{self.name}' ({self.MODEL}) does not support 3D detections")
 
     async def get_properties(self, *, extra: Optional[Mapping[str, ValueTypes]] = None, timeout: Optional[float] = None) -> GetPropertiesResponse:
         return GetPropertiesResponse(
